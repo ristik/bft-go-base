@@ -297,7 +297,11 @@ func TestV2StructureRules(t *testing.T) {
 		e := v2Genesis(t)
 		e.RootNodes = nil
 		for i := 0; i < MaxTrustBaseV2Members; i++ {
-			m := v2Members(t, "x")[0]
+			sg, err := abcrypto.NewInMemorySecp256K1Signer()
+			require.NoError(t, err)
+			vf, _ := sg.Verifier()
+			pk, _ := vf.MarshalPublicKey()
+			m := &NodeInfo{SigKey: pk}
 			m.NodeID = fmt.Sprintf("n%04d", i)
 			m.Stake = MaxTrustBaseV2Weight
 			e.RootNodes = append(e.RootNodes, m)

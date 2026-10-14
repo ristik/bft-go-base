@@ -197,6 +197,7 @@ func (r *RootTrustBaseV2) Validate() error {
 		return bad("%d members (1..%d)", n, MaxTrustBaseV2Members)
 	}
 	var total uint64
+	keys := make(map[string]string, n)
 	for i, m := range r.RootNodes {
 		if m == nil {
 			return bad("member %d is nil", i)
@@ -213,6 +214,11 @@ func (r *RootTrustBaseV2) Validate() error {
 		if _, err := abcrypto.NewVerifierSecp256k1(m.SigKey); err != nil {
 			return bad("member %q: %v", m.NodeID, err)
 		}
+		// 33-byte compressed keys have one encoding per point, so a byte comparison finds a repeated key: one key holder must not count for several members
+		if other, dup := keys[string(m.SigKey)]; dup {
+			return bad("members %q and %q share a signing key", other, m.NodeID)
+		}
+		keys[string(m.SigKey)] = m.NodeID
 		total += m.Stake // cannot overflow: at most 256 * 2^40
 	}
 	if want := total*2/3 + 1; r.QuorumThreshold != want {
@@ -332,7 +338,8 @@ func (r *RootTrustBaseV2) GetEpochStart() uint64      { return r.EpochStart }
 func (r *RootTrustBaseV2) GetQuorumThreshold() uint64 { return r.QuorumThreshold }
 func (r *RootTrustBaseV2) GetRootNodes() []*NodeInfo  { return r.RootNodes }
 
-// GetMaxFaultyNodes is the largest total weight that may be faulty without reaching the threshold, W - threshold.
+// GetMaxFaultyNodes is the largest total weight that may be faulty without reaching the threshold, W - threshold. The sum is unchecked: it is safe only
+// on an entry that passed Validate (weights are bounded there); every decoded entry has.
 func (r *RootTrustBaseV2) GetMaxFaultyNodes() uint64 {
 	var total uint64
 	for _, m := range r.RootNodes {

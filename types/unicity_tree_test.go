@@ -4,8 +4,8 @@ import (
 	"crypto"
 	"testing"
 
-	abhash "github.com/unicitynetwork/bft-go-base/hash"
 	"github.com/stretchr/testify/require"
+	abhash "github.com/unicitynetwork/bft-go-base/hash"
 
 	"github.com/unicitynetwork/bft-go-base/tree/imt"
 )

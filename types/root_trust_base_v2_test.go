@@ -266,6 +266,7 @@ func TestV2StructureRules(t *testing.T) {
 		"long node id": func(e *RootTrustBaseV2) {
 			e.RootNodes[3].NodeID = string(bytes.Repeat([]byte{'z'}, MaxTrustBaseV2NodeIDLen+1))
 		},
+		"shared signing key":     func(e *RootTrustBaseV2) { e.RootNodes[1].SigKey = slices.Clone(e.RootNodes[0].SigKey) },
 		"zero weight":            func(e *RootTrustBaseV2) { e.RootNodes[0].Stake = 0 },
 		"huge weight":            func(e *RootTrustBaseV2) { e.RootNodes[0].Stake = MaxTrustBaseV2Weight + 1 },
 		"uncompressed key":       func(e *RootTrustBaseV2) { e.RootNodes[0].SigKey = append([]byte{4}, e.RootNodes[0].SigKey[1:]...) },

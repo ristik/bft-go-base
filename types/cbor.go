@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/unicitynetwork/bft-go-base/types/hex"
 	"github.com/fxamacker/cbor/v2"
+	"github.com/unicitynetwork/bft-go-base/types/hex"
 )
 
 type (

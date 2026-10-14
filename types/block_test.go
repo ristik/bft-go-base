@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	testsig "github.com/unicitynetwork/bft-go-base/testutils/sig"
 	"github.com/unicitynetwork/bft-go-base/tree/mt"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBlock_GetBlockFees(t *testing.T) {

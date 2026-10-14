@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	abcrypto "github.com/unicitynetwork/bft-go-base/crypto"
 	abhash "github.com/unicitynetwork/bft-go-base/hash"
 	test "github.com/unicitynetwork/bft-go-base/testutils"
-	"github.com/stretchr/testify/require"
 )
 
 func TestUnicityTreeCertificate_IsValid(t *testing.T) {

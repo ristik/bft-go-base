@@ -254,10 +254,16 @@ func CanonicalShardOrder(scheme ShardingScheme) ([]ShardID, error) {
 	if len(scheme) > MaxPartitionViewLeaves {
 		return nil, fmt.Errorf("scheme has %d shards, limit is %d", len(scheme), MaxPartitionViewLeaves)
 	}
-	if err := scheme.IsValid(); err != nil {
+	return canonicalShardOrder(scheme, compareShardIDs)
+}
+
+func canonicalShardOrder(scheme ShardingScheme, cmp func(a, b ShardID) int) ([]ShardID, error) {
+	sorted, err := scheme.sortedValid(cmp)
+	if err != nil {
 		return nil, fmt.Errorf("invalid sharding scheme: %w", err)
 	}
-	ids := slices.Collect(scheme.All())
+	// validation already produced the canonical (left-to-right) order
+	ids := slices.Collect(sorted.All())
 	maxLen := uint(0)
 	for _, id := range ids {
 		if id.length > MaxPartitionViewShardIDBits {
@@ -273,9 +279,6 @@ func CanonicalShardOrder(scheme ShardingScheme) ([]ShardID, error) {
 	if sum.Cmp(new(big.Int).Lsh(big.NewInt(1), maxLen)) != 0 {
 		return nil, errors.New("sharding scheme does not cover the whole shard tree")
 	}
-	slices.SortFunc(ids, func(a, b ShardID) int {
-		return bytes.Compare([]byte(a.String()), []byte(b.String()))
-	})
 	return ids, nil
 }
 

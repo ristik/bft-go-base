@@ -36,6 +36,9 @@ type AuthenticatedPartitionView struct {
 	view      *PartitionViewV1
 	enclosing *UnicityCertificate
 	tree      ShardTree
+	// index maps ShardID.Key() to the leaf position: built once at authentication so that
+	// per-shard accessors and lazy certificate derivation are O(1) lookups, not O(S) scans
+	index map[string]int
 	// sealBytes and pathBytes are the canonical encodings of the complete seal and
 	// partition path every derived UC carries
 	sealBytes []byte
@@ -140,9 +143,17 @@ func AuthenticateView(candidate *PartitionViewV1, enclosingUC *UnicityCertificat
 	if err != nil {
 		return nil, fmt.Errorf("encoding unicity tree certificate: %w", err)
 	}
+	// the seal is derived from these bytes for every certificate: they must round-trip exactly (checked once here)
+	var sealCopy UnicitySeal
+	if err := sealCopy.UnmarshalCBOR(sealBytes); err != nil {
+		return nil, fmt.Errorf("copying unicity seal: %w", err)
+	}
+	if b, err := sealCopy.MarshalCBOR(); err != nil || !bytes.Equal(b, sealBytes) {
+		return nil, fmt.Errorf("unicity seal does not re-encode identically (err: %v)", err)
+	}
 	av := &AuthenticatedPartitionView{
 		partition: partition, scheme: slices.Clone(topo.Scheme), view: view, tree: tree,
-		sealBytes: sealBytes, pathBytes: pathBytes,
+		index: leafIndex(view), sealBytes: sealBytes, pathBytes: pathBytes,
 	}
 	// the enclosing UC as an independent copy
 	if av.enclosing, err = cloneUC(enclosingUC); err != nil {
@@ -165,6 +176,15 @@ func checkCompletePins(topo PartitionViewTopology) error {
 		}
 	}
 	return nil
+}
+
+// leafIndex maps the shard key of every leaf to its position.
+func leafIndex(v *PartitionViewV1) map[string]int {
+	m := make(map[string]int, len(v.Leaves))
+	for i := range v.Leaves {
+		m[v.Leaves[i].ShardID.Key()] = i
+	}
+	return m
 }
 
 func cloneUC(uc *UnicityCertificate) (*UnicityCertificate, error) {
@@ -209,10 +229,8 @@ func (a *AuthenticatedPartitionView) ShardConfHashes() map[string][]byte {
 
 // ShardConfHash returns the committed configuration hash of the shard.
 func (a *AuthenticatedPartitionView) ShardConfHash(shard ShardID) ([]byte, bool) {
-	for _, l := range a.view.Leaves {
-		if l.ShardID.Equal(shard) {
-			return bytes.Clone(l.ShardConfHash), true
-		}
+	if i, ok := a.index[shard.Key()]; ok {
+		return bytes.Clone(a.view.Leaves[i].ShardConfHash), true
 	}
 	return nil, false
 }
@@ -223,12 +241,12 @@ func (a *AuthenticatedPartitionView) Topology() PartitionViewTopology {
 	return PartitionViewTopology{Scheme: a.Scheme(), ShardConfHashes: a.ShardConfHashes()}
 }
 
-// Certificate derives the ordinary version 1 unicity certificate of the shard.
+// Certificate derives the ordinary version 1 unicity certificate of the shard. It is derived
+// lazily from the one authenticated tree: O(dS) tree path work plus the certificate bytes, independent of the
+// number of other shards.
 func (a *AuthenticatedPartitionView) Certificate(shard ShardID) (*UnicityCertificate, error) {
-	for i := range a.view.Leaves {
-		if a.view.Leaves[i].ShardID.Equal(shard) {
-			return a.certificate(i)
-		}
+	if i, ok := a.index[shard.Key()]; ok {
+		return a.certificate(i)
 	}
 	return nil, fmt.Errorf("shard %q is not in the authenticated view", shard)
 }
@@ -266,9 +284,6 @@ func (a *AuthenticatedPartitionView) certificate(i int) (*UnicityCertificate, er
 	}
 	if err := utc.UnmarshalCBOR(a.pathBytes); err != nil {
 		return nil, fmt.Errorf("copying unicity tree certificate: %w", err)
-	}
-	if b, err := seal.MarshalCBOR(); err != nil || !bytes.Equal(b, a.sealBytes) {
-		return nil, fmt.Errorf("unicity seal does not re-encode identically (err: %v)", err)
 	}
 	return &UnicityCertificate{
 		Version: 1, InputRecord: l.InputRecord, TRHash: l.TRHash, ShardConfHash: l.ShardConfHash,

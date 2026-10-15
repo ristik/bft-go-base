@@ -2,6 +2,7 @@ package types
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"iter"
@@ -160,25 +161,52 @@ func (sh ShardingScheme) All() iter.Seq[ShardID] {
 	}
 }
 
+// compareShardIDs orders shard IDs as bit strings, "0" before "1", a proper prefix before its
+// extensions. Unused bits of ShardID.bits are always zero, so comparing the padded bytes first and
+// the lengths second is exactly the bit string order.
+func compareShardIDs(a, b ShardID) int {
+	if c := bytes.Compare(a.bits, b.bits); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.length, b.length)
+}
+
+// IsValid checks that the scheme is a non-trivial prefix-free set of non-empty shard IDs.
+//
+// In bit string order every extension of a shard ID A sorts directly after A, so a scheme is prefix-free
+// (and duplicate-free) iff no ID is a prefix of its successor. That is O(S) comparisons for an already
+// canonical (sorted) scheme and O(S log S) otherwise, instead of the O(S^2) pairwise check.
 func (sh ShardingScheme) IsValid() error {
+	_, err := sh.sortedValid(compareShardIDs)
+	return err
+}
+
+// sortedValid validates the scheme and returns it in bit string order. The input is not modified;
+// it is only copied when it is not already sorted. cmp is the (counted in tests) order.
+func (sh ShardingScheme) sortedValid(cmp func(a, b ShardID) int) (ShardingScheme, error) {
 	// single shard scheme is denoted by empty slice, there is no valid case with single item
 	if len(sh) == 1 {
-		return fmt.Errorf("scheme can't contain single shard, got %q", sh[0])
+		return nil, fmt.Errorf("scheme can't contain single shard, got %q", sh[0])
 	}
-
-	for idxA, idA := range sh {
-		if idA.length == 0 {
-			return errors.New("scheme may not contain empty shard ID")
+	sorted := true
+	for i := range sh {
+		if sh[i].length == 0 {
+			return nil, errors.New("scheme may not contain empty shard ID")
 		}
-		isPrefixOf := idA.Comparator()
-		for idxB, idB := range sh {
-			if idA.length <= idB.length && idxA != idxB {
-				if isPrefixOf(idB.bits) {
-					return fmt.Errorf("scheme is not prefix-free: %s is prefix of %s", idA, idB)
-				}
-			}
+		if i > 0 && cmp(sh[i-1], sh[i]) > 0 {
+			sorted = false
 		}
 	}
-
-	return nil
+	ordered := sh
+	if !sorted {
+		ordered = slices.Clone(sh)
+		slices.SortFunc(ordered, cmp)
+	}
+	for i := 1; i < len(ordered); i++ {
+		a, b := ordered[i-1], ordered[i]
+		if a.length <= b.length && a.Comparator()(b.bits) {
+			return nil, fmt.Errorf("scheme is not prefix-free: %s is prefix of %s", a, b)
+		}
+	}
+	return ordered, nil
 }

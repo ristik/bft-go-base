@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -311,4 +312,118 @@ func TestAuthenticatedPartitionView_IsImmutable(t *testing.T) {
 	// derived certificates do not share memory with each other
 	after[0].UnicitySeal.Hash[0] ^= 0xff
 	require.NotEqual(t, after[0].UnicitySeal.Hash, after[1].UnicitySeal.Hash)
+}
+
+// Returned certificates never alias the authenticated object nor each other, including
+// the sibling hashes which the shard tree shares between the paths of different shards.
+func TestAuthenticatedPartitionView_ReturnedPathsDoNotAlias(t *testing.T) {
+	scheme := pvScheme(2)
+	topo := pvTopology(scheme)
+	f := pvEnclose(t, pvView(t, scheme), topo)
+	av, err := pvAuth(f)
+	require.NoError(t, err)
+
+	golden, err := av.Certificates()
+	require.NoError(t, err)
+	goldenBytes := make([][]byte, len(golden))
+	for i, uc := range golden {
+		goldenBytes[i], err = uc.MarshalCBOR()
+		require.NoError(t, err)
+	}
+	verifyAll := func() {
+		t.Helper()
+		ucs, err := av.Certificates()
+		require.NoError(t, err)
+		for i, uc := range ucs {
+			b, err := uc.MarshalCBOR()
+			require.NoError(t, err)
+			require.Equal(t, goldenBytes[i], b, "shard %d", i)
+			require.NoError(t, uc.Verify(f.tb, crypto.SHA256, pvTestPartition, uc.ShardTreeCertificate.Shard, uc.ShardConfHash))
+		}
+	}
+
+	// mutate every sibling hash of every certificate of a first derivation
+	first, err := av.Certificates()
+	require.NoError(t, err)
+	for _, uc := range first {
+		for _, h := range uc.ShardTreeCertificate.SiblingHashes {
+			for i := range h {
+				h[i] ^= 0xff
+			}
+		}
+		uc.ShardTreeCertificate.Shard = ShardID{}
+	}
+	verifyAll()
+
+	// single certificates, mutated, then derived again
+	c1, err := av.Certificate(scheme[0])
+	require.NoError(t, err)
+	c1.ShardTreeCertificate.SiblingHashes[0][0] ^= 0xff
+	c1.ShardTreeCertificate.SiblingHashes[1][0] ^= 0xff
+	c2, err := av.Certificate(scheme[0])
+	require.NoError(t, err)
+	require.NotEqual(t, c1.ShardTreeCertificate.SiblingHashes[0], c2.ShardTreeCertificate.SiblingHashes[0])
+	verifyAll()
+
+	// hashes shared by the paths of different shards (the sibling subtree of 00 is the node 01's
+	// path ends with, both lead to the other half "1"): mutating one certificate cannot change another
+	a, _ := av.Certificate(scheme[0])
+	b, _ := av.Certificate(scheme[1])
+	require.Equal(t, a.ShardTreeCertificate.SiblingHashes[1], b.ShardTreeCertificate.SiblingHashes[1], "same committed hash")
+	a.ShardTreeCertificate.SiblingHashes[1][0] ^= 0xff
+	require.NotEqual(t, a.ShardTreeCertificate.SiblingHashes[1], b.ShardTreeCertificate.SiblingHashes[1])
+	verifyAll()
+	require.NoError(t, b.Verify(f.tb, crypto.SHA256, pvTestPartition, scheme[1], topo.ShardConfHashes[scheme[1].Key()]))
+
+	// and the enclosing certificate the caller passed in does not share its paths either
+	f.uc.ShardTreeCertificate.SiblingHashes[0][0] ^= 0xff
+	verifyAll()
+}
+
+// Pins must be complete: a missing entry is not "unpinned".
+func TestAuthenticateView_PinsMustBeComplete(t *testing.T) {
+	scheme := pvScheme(2)
+	topo := pvTopology(scheme)
+	f := pvEnclose(t, pvView(t, scheme), topo)
+	clonePins := func() PartitionViewTopology {
+		c := PartitionViewTopology{Scheme: slices.Clone(topo.Scheme), ShardConfHashes: map[string][]byte{}}
+		for k, v := range topo.ShardConfHashes {
+			c.ShardConfHashes[k] = bytes.Clone(v)
+		}
+		return c
+	}
+	_, err := pvAuth(f, WithPinnedTopology(clonePins()))
+	require.NoError(t, err)
+
+	missing := clonePins()
+	delete(missing.ShardConfHashes, scheme[2].Key())
+	empty := clonePins()
+	empty.ShardConfHashes = map[string][]byte{}
+	nilMap := clonePins()
+	nilMap.ShardConfHashes = nil
+	short := clonePins()
+	short.ShardConfHashes[scheme[1].Key()] = short.ShardConfHashes[scheme[1].Key()][:31]
+	emptyHash := clonePins()
+	emptyHash.ShardConfHashes[scheme[3].Key()] = []byte{}
+	long := clonePins()
+	long.ShardConfHashes[scheme[0].Key()] = append(long.ShardConfHashes[scheme[0].Key()], 0)
+	incomplete := clonePins()
+	incomplete.Scheme = incomplete.Scheme[:3]
+	overlapping := clonePins()
+	overlapping.Scheme = append(overlapping.Scheme, ShardID{bits: []byte{0}, length: 1})
+	empties := PartitionViewTopology{}
+	for name, pins := range map[string]PartitionViewTopology{
+		"missing entry": missing, "empty map": empty, "nil map": nilMap, "short hash": short,
+		"empty hash": emptyHash, "long hash": long, "incomplete scheme": incomplete, "overlapping scheme": overlapping,
+		"zero value pins": empties,
+	} {
+		_, err := pvAuth(f, WithPinnedTopology(pins))
+		require.ErrorContains(t, err, "pinned topology", name)
+	}
+	// single shard pins are complete with the empty shard's hash
+	one := pvEnclose(t, pvView(t, ShardingScheme{}), pvTopology(ShardingScheme{}))
+	_, err = pvAuth(one, WithPinnedTopology(pvTopology(ShardingScheme{})))
+	require.NoError(t, err)
+	_, err = pvAuth(one, WithPinnedTopology(PartitionViewTopology{ShardConfHashes: map[string][]byte{}}))
+	require.ErrorContains(t, err, "pinned topology")
 }

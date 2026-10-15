@@ -50,8 +50,8 @@ type authOptions struct {
 type AuthOption func(*authOptions)
 
 // WithPinnedTopology additionally requires the view to have exactly the scheme
-// and configuration hashes of an independently admitted topology (every shard
-// needs its hash). It can only reject more, never admit what the seal does not commit to.
+// and configuration hashes of an independently admitted topology. The pins must be
+// complete: a valid scheme and a 32-byte hash for every shard, otherwise they are refused. It can only reject more, never admit what the seal does not commit to.
 func WithPinnedTopology(topo PartitionViewTopology) AuthOption {
 	return func(o *authOptions) {
 		t := PartitionViewTopology{Scheme: slices.Clone(topo.Scheme), ShardConfHashes: map[string][]byte{}}
@@ -115,6 +115,9 @@ func AuthenticateView(candidate *PartitionViewV1, enclosingUC *UnicityCertificat
 	// against the canonical order of the scheme they themselves form
 	tree, err := func() (ShardTree, error) {
 		if o.pinned != nil {
+			if err := checkCompletePins(*o.pinned); err != nil {
+				return nil, err
+			}
 			if err := view.ValidateStructure(partition, *o.pinned); err != nil {
 				return nil, fmt.Errorf("view does not match the pinned topology: %w", err)
 			}
@@ -146,6 +149,22 @@ func AuthenticateView(candidate *PartitionViewV1, enclosingUC *UnicityCertificat
 		return nil, err
 	}
 	return av, nil
+}
+
+// checkCompletePins requires pins to be a complete admitted topology: a valid scheme and
+// a native 32-byte configuration hash for EVERY shard of it. Missing entries are not
+// "unpinned", they make the pins unusable.
+func checkCompletePins(topo PartitionViewTopology) error {
+	order, err := CanonicalShardOrder(topo.Scheme)
+	if err != nil {
+		return fmt.Errorf("pinned topology: %w", err)
+	}
+	for _, id := range order {
+		if h := topo.ShardConfHashes[id.Key()]; len(h) != partitionViewHashLen {
+			return fmt.Errorf("pinned topology: shard %q needs a %d-byte configuration hash, got %d bytes", id, partitionViewHashLen, len(h))
+		}
+	}
+	return nil
 }
 
 func cloneUC(uc *UnicityCertificate) (*UnicityCertificate, error) {
@@ -234,6 +253,13 @@ func (a *AuthenticatedPartitionView) certificate(i int) (*UnicityCertificate, er
 	if err != nil {
 		return nil, fmt.Errorf("shard tree certificate of %q: %w", l.ShardID, err)
 	}
+	// the tree hands out its own hash slices (shared between the paths of different
+	// shards): every returned certificate gets private copies
+	siblings := make([][]byte, len(stc.SiblingHashes))
+	for i, h := range stc.SiblingHashes {
+		siblings[i] = bytes.Clone(h)
+	}
+	stc.SiblingHashes = siblings
 	seal, utc := &UnicitySeal{}, &UnicityTreeCertificate{}
 	if err := seal.UnmarshalCBOR(a.sealBytes); err != nil {
 		return nil, fmt.Errorf("copying unicity seal: %w", err)

@@ -418,9 +418,23 @@ TrustBaseSealVerifier adapts a root trust base to SealVerifier. Besides the
 quorum signatures it enforces the authority context of the trust base: the
 seal must be of the same network and epoch and must not predate the epoch start.
 */
-func TrustBaseSealVerifier(tb RootTrustBase) SealVerifier { return trustBaseSealVerifier{tb} }
+func TrustBaseSealVerifier(tb RootTrustBase) SealVerifier { return trustBaseSealVerifier{tb: tb} }
 
-type trustBaseSealVerifier struct{ tb RootTrustBase }
+/*
+TrustBaseSealVerifierUntil is TrustBaseSealVerifier with the end boundary of
+the epoch: the seal round must be below "nextEpochStart", the start round of the
+next epoch as given by an authenticated trust base history. Pass the boundary
+only when the history provides it; an absent boundary does not prove freshness.
+*/
+func TrustBaseSealVerifierUntil(tb RootTrustBase, nextEpochStart uint64) SealVerifier {
+	return trustBaseSealVerifier{tb: tb, end: nextEpochStart}
+}
+
+type trustBaseSealVerifier struct {
+	tb RootTrustBase
+	// end is the exclusive end round of the epoch, zero if unknown
+	end uint64
+}
 
 func (v trustBaseSealVerifier) VerifySeal(seal *UnicitySeal) error {
 	if v.tb == nil {
@@ -439,21 +453,21 @@ func (v trustBaseSealVerifier) VerifySeal(seal *UnicitySeal) error {
 		return fmt.Errorf("seal round %d is before the start of epoch %d (round %d)",
 			seal.RootChainRoundNumber, v.tb.GetEpoch(), v.tb.GetEpochStart())
 	}
+	if v.end != 0 && seal.RootChainRoundNumber >= v.end {
+		return fmt.Errorf("seal round %d is at or after the end of epoch %d (next epoch starts at round %d)",
+			seal.RootChainRoundNumber, v.tb.GetEpoch(), v.end)
+	}
 	return seal.Verify(v.tb)
 }
 
 /*
 AssembleCertificates derives the ordinary version 1 unicity certificate of
-every shard in the view, in canonical order. It requires every step of
-VerifyTree, the topology to carry the admitted configuration hash of every
-shard and the seal of the enclosing UC to be authenticated by "sealVerifier".
-Derived certificates share the partition certificate and carry an identical
-copy of the complete seal of the enclosing UC.
+every shard in the view, in canonical order, under an independently PINNED
+topology: the topology must carry the admitted configuration hash of every
+shard. It is the stricter policy of AuthenticateView (WithPinnedTopology) and
+returns the certificates of the authenticated view.
 */
 func (v *PartitionViewV1) AssembleCertificates(enclosingUC *UnicityCertificate, partition PartitionID, topo PartitionViewTopology, sealVerifier SealVerifier, algo crypto.Hash) ([]*UnicityCertificate, error) {
-	if sealVerifier == nil {
-		return nil, ErrRootValidatorInfoMissing
-	}
 	order, err := CanonicalShardOrder(topo.Scheme)
 	if err != nil {
 		return nil, err
@@ -463,49 +477,9 @@ func (v *PartitionViewV1) AssembleCertificates(enclosingUC *UnicityCertificate, 
 			return nil, fmt.Errorf("shard %q: admitted configuration hash is required", id)
 		}
 	}
-	tree, err := v.VerifyTree(enclosingUC, partition, topo, algo)
+	av, err := AuthenticateView(v, enclosingUC, partition, sealVerifier, algo, WithPinnedTopology(topo))
 	if err != nil {
 		return nil, err
 	}
-	if err := sealVerifier.VerifySeal(enclosingUC.UnicitySeal); err != nil {
-		return nil, fmt.Errorf("authenticating unicity seal: %w", err)
-	}
-
-	sealBytes, err := enclosingUC.UnicitySeal.MarshalCBOR()
-	if err != nil {
-		return nil, fmt.Errorf("encoding unicity seal: %w", err)
-	}
-	utcBytes, err := enclosingUC.UnicityTreeCertificate.MarshalCBOR()
-	if err != nil {
-		return nil, fmt.Errorf("encoding unicity tree certificate: %w", err)
-	}
-	ucs := make([]*UnicityCertificate, len(v.Leaves))
-	for i := range v.Leaves {
-		l := v.Leaves[i].Clone()
-		stc, err := tree.Certificate(l.ShardID)
-		if err != nil {
-			return nil, fmt.Errorf("shard tree certificate of %q: %w", l.ShardID, err)
-		}
-		// every UC gets own copy of the shared parts, they must re-encode identically
-		seal, utc := &UnicitySeal{}, &UnicityTreeCertificate{}
-		if err := seal.UnmarshalCBOR(sealBytes); err != nil {
-			return nil, fmt.Errorf("copying unicity seal: %w", err)
-		}
-		if err := utc.UnmarshalCBOR(utcBytes); err != nil {
-			return nil, fmt.Errorf("copying unicity tree certificate: %w", err)
-		}
-		if b, err := seal.MarshalCBOR(); err != nil || !bytes.Equal(b, sealBytes) {
-			return nil, fmt.Errorf("unicity seal does not re-encode identically (err: %v)", err)
-		}
-		ucs[i] = &UnicityCertificate{
-			Version:                1,
-			InputRecord:            l.InputRecord,
-			TRHash:                 l.TRHash,
-			ShardConfHash:          l.ShardConfHash,
-			ShardTreeCertificate:   stc,
-			UnicityTreeCertificate: utc,
-			UnicitySeal:            seal,
-		}
-	}
-	return ucs, nil
+	return av.Certificates()
 }

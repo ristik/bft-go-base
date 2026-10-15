@@ -365,6 +365,11 @@ func (v *PartitionViewV1) VerifyTree(enclosingUC *UnicityCertificate, partition 
 		return nil, fmt.Errorf("enclosing UC is for partition %s, view is for %s",
 			enclosingUC.UnicityTreeCertificate.Partition, v.PartitionID)
 	}
+	for i, step := range enclosingUC.UnicityTreeCertificate.HashSteps {
+		if step == nil {
+			return nil, fmt.Errorf("unicity tree certificate hash step %d is nil", i)
+		}
+	}
 	utRoot, err := enclosingUC.UnicityTreeCertificate.EvalAuthPath(tree.RootHash(), algo)
 	if err != nil {
 		return nil, fmt.Errorf("evaluating unicity tree certificate: %w", err)
@@ -408,12 +413,34 @@ type SealVerifier interface {
 	VerifySeal(seal *UnicitySeal) error
 }
 
-// TrustBaseSealVerifier adapts a root trust base to SealVerifier.
+/*
+TrustBaseSealVerifier adapts a root trust base to SealVerifier. Besides the
+quorum signatures it enforces the authority context of the trust base: the
+seal must be of the same network and epoch and must not predate the epoch start.
+*/
 func TrustBaseSealVerifier(tb RootTrustBase) SealVerifier { return trustBaseSealVerifier{tb} }
 
 type trustBaseSealVerifier struct{ tb RootTrustBase }
 
-func (v trustBaseSealVerifier) VerifySeal(seal *UnicitySeal) error { return seal.Verify(v.tb) }
+func (v trustBaseSealVerifier) VerifySeal(seal *UnicitySeal) error {
+	if v.tb == nil {
+		return ErrRootValidatorInfoMissing
+	}
+	if seal == nil {
+		return ErrUnicitySealIsNil
+	}
+	if seal.NetworkID != v.tb.GetNetworkID() {
+		return fmt.Errorf("seal is of network %d, trust base is of network %d", seal.NetworkID, v.tb.GetNetworkID())
+	}
+	if seal.Epoch != v.tb.GetEpoch() {
+		return fmt.Errorf("seal is of epoch %d, trust base is of epoch %d", seal.Epoch, v.tb.GetEpoch())
+	}
+	if seal.RootChainRoundNumber < v.tb.GetEpochStart() {
+		return fmt.Errorf("seal round %d is before the start of epoch %d (round %d)",
+			seal.RootChainRoundNumber, v.tb.GetEpoch(), v.tb.GetEpochStart())
+	}
+	return seal.Verify(v.tb)
+}
 
 /*
 AssembleCertificates derives the ordinary version 1 unicity certificate of

@@ -102,14 +102,15 @@ func pvEnclose(t *testing.T, view *PartitionViewV1, topo PartitionViewTopology) 
 	require.NotEmpty(t, utc.HashSteps)
 
 	signer, verifier := testsig.CreateSignerAndVerifier(t)
-	seal := &UnicitySeal{Version: 1, NetworkID: 5, RootChainRoundNumber: 77, Timestamp: NewTimestamp(), PreviousHash: pvHash("prev root"), Hash: ut.RootHash()}
+	tb := NewTrustBaseT(t, verifier)
+	seal := &UnicitySeal{Version: 1, NetworkID: tb.GetNetworkID(), Epoch: tb.GetEpoch(), RootChainRoundNumber: tb.GetEpochStart() + 77, Timestamp: NewTimestamp(), PreviousHash: pvHash("prev root"), Hash: ut.RootHash()}
 	require.NoError(t, seal.Sign("test", signer))
 
 	l := view.Leaves[0]
 	stc, err := tree.Certificate(l.ShardID)
 	require.NoError(t, err)
 	return &pvFixture{
-		view: view, topo: topo, tree: tree, tb: NewTrustBaseT(t, verifier), sealOnly: seal,
+		view: view, topo: topo, tree: tree, tb: tb, sealOnly: seal,
 		uc: &UnicityCertificate{
 			Version: 1, InputRecord: l.InputRecord, TRHash: l.TRHash, ShardConfHash: l.ShardConfHash,
 			ShardTreeCertificate: stc, UnicityTreeCertificate: utc, UnicitySeal: seal,
@@ -612,4 +613,68 @@ func Test_PartitionView_Vectors(t *testing.T) {
 		_, err = DecodePartitionViewV1(got)
 		require.NoError(t, err, name)
 	}
+}
+
+func Test_TrustBaseSealVerifier_AuthorityContext(t *testing.T) {
+	signer, verifier := testsig.CreateSignerAndVerifier(t)
+	sigKey, err := verifier.MarshalPublicKey()
+	require.NoError(t, err)
+	newTB := func(net NetworkID, epoch, start uint64) RootTrustBase {
+		tb, err := NewTrustBase(net, []*NodeInfo{{NodeID: "test", SigKey: sigKey, Stake: 1}}, WithEpoch(epoch), WithEpochStart(start))
+		require.NoError(t, err)
+		return tb
+	}
+	// the same keys are trusted in all of these contexts
+	tb := newTB(NetworkMainNet, 3, 50)
+	sign := func(net NetworkID, epoch, round uint64) *UnicitySeal {
+		s := &UnicitySeal{Version: 1, NetworkID: net, Epoch: epoch, RootChainRoundNumber: round, Timestamp: NewTimestamp(), Hash: pvHash("root")}
+		require.NoError(t, s.Sign("test", signer))
+		return s
+	}
+	v := TrustBaseSealVerifier(tb)
+	require.NoError(t, v.VerifySeal(sign(NetworkMainNet, 3, 50)))
+	require.NoError(t, v.VerifySeal(sign(NetworkMainNet, 3, 51)))
+	require.ErrorContains(t, v.VerifySeal(sign(NetworkMainNet+1, 3, 60)), "network")
+	require.ErrorContains(t, v.VerifySeal(sign(NetworkMainNet, 2, 60)), "epoch")
+	require.ErrorContains(t, v.VerifySeal(sign(NetworkMainNet, 4, 60)), "epoch")
+	require.ErrorContains(t, v.VerifySeal(sign(NetworkMainNet, 3, 49)), "before the start")
+	require.Error(t, v.VerifySeal(nil))
+	require.Error(t, TrustBaseSealVerifier(nil).VerifySeal(sign(NetworkMainNet, 3, 60)))
+
+	// and through assembly: validly signed seal of another network/epoch is refused
+	scheme := pvScheme(1)
+	topo := pvTopology(scheme)
+	view := pvView(t, scheme)
+	f := pvEnclose(t, view, topo)
+	for name, tbx := range map[string]RootTrustBase{
+		"network": newTB(NetworkMainNet+1, f.tb.GetEpoch(), 0),
+		"epoch":   newTB(f.tb.GetNetworkID(), f.tb.GetEpoch()+1, 0),
+	} {
+		_, err := view.AssembleCertificates(f.uc, pvTestPartition, topo, TrustBaseSealVerifier(tbx), crypto.SHA256)
+		require.Error(t, err, name)
+	}
+}
+
+func Test_PartitionView_NilPathStep(t *testing.T) {
+	scheme := pvScheme(2)
+	topo := pvTopology(scheme)
+	f := pvEnclose(t, pvView(t, scheme), topo)
+	uc := *f.uc
+	utc := *uc.UnicityTreeCertificate
+	utc.HashSteps = []*PathItem{nil}
+	uc.UnicityTreeCertificate = &utc
+	// the nil entry survives native wire round trip
+	b, err := uc.MarshalCBOR()
+	require.NoError(t, err)
+	var wire UnicityCertificate
+	require.NoError(t, wire.UnmarshalCBOR(b))
+	require.Len(t, wire.UnicityTreeCertificate.HashSteps, 1)
+	require.Nil(t, wire.UnicityTreeCertificate.HashSteps[0])
+
+	require.NotPanics(t, func() {
+		_, err := f.view.VerifyTree(&wire, pvTestPartition, topo, crypto.SHA256)
+		require.ErrorContains(t, err, "hash step 0 is nil")
+		_, err = f.view.AssembleCertificates(&wire, pvTestPartition, topo, TrustBaseSealVerifier(f.tb), crypto.SHA256)
+		require.ErrorContains(t, err, "hash step 0 is nil")
+	})
 }

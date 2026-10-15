@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync/atomic"
 )
 
 /*
@@ -39,6 +40,8 @@ type AuthenticatedPartitionView struct {
 	// index maps ShardID.Key() to the leaf position: built once at authentication so that
 	// per-shard accessors and lazy certificate derivation are O(1) lookups, not O(S) scans
 	index map[string]int
+	// leafProbes counts the leaves examined by shard lookups (observability for the scaling tests)
+	leafProbes atomic.Int64
 	// sealBytes and pathBytes are the canonical encodings of the complete seal and
 	// partition path every derived UC carries
 	sealBytes []byte
@@ -178,6 +181,13 @@ func checkCompletePins(topo PartitionViewTopology) error {
 	return nil
 }
 
+// find returns the leaf position of the shard: one index probe, independent of the number of shards.
+func (a *AuthenticatedPartitionView) find(shard ShardID) (int, bool) {
+	a.leafProbes.Add(1)
+	i, ok := a.index[shard.Key()]
+	return i, ok
+}
+
 // leafIndex maps the shard key of every leaf to its position.
 func leafIndex(v *PartitionViewV1) map[string]int {
 	m := make(map[string]int, len(v.Leaves))
@@ -229,7 +239,7 @@ func (a *AuthenticatedPartitionView) ShardConfHashes() map[string][]byte {
 
 // ShardConfHash returns the committed configuration hash of the shard.
 func (a *AuthenticatedPartitionView) ShardConfHash(shard ShardID) ([]byte, bool) {
-	if i, ok := a.index[shard.Key()]; ok {
+	if i, ok := a.find(shard); ok {
 		return bytes.Clone(a.view.Leaves[i].ShardConfHash), true
 	}
 	return nil, false
@@ -245,7 +255,7 @@ func (a *AuthenticatedPartitionView) Topology() PartitionViewTopology {
 // lazily from the one authenticated tree: O(dS) tree path work plus the certificate bytes, independent of the
 // number of other shards.
 func (a *AuthenticatedPartitionView) Certificate(shard ShardID) (*UnicityCertificate, error) {
-	if i, ok := a.index[shard.Key()]; ok {
+	if i, ok := a.find(shard); ok {
 		return a.certificate(i)
 	}
 	return nil, fmt.Errorf("shard %q is not in the authenticated view", shard)

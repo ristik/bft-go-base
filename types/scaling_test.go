@@ -173,13 +173,24 @@ func TestCanonicalShardOrder_SingleSortCounted(t *testing.T) {
 	s := randomCompleteScheme(rng, 32)
 	rng.Shuffle(len(s), func(i, j int) { s[i], s[j] = s[j], s[i] })
 	before := slices.Clone(s)
-	_, err := CanonicalShardOrder(s[:8:8][:0])
+	require.False(t, slices.IsSortedFunc(s, compareShardIDs), "the input must be unsorted so that the sorting path runs")
+	got, err := canonicalShardOrder(s, compareShardIDs) // the public function caps the scheme at 8 shards
 	require.NoError(t, err)
-	require.Equal(t, before, s)
+	require.True(t, slices.IsSortedFunc(got, compareShardIDs))
+	require.Equal(t, before, s, "the caller's scheme must not be reordered")
+	// the public function does not modify an (8 shard, unsorted) scheme either
+	small := randomCompleteScheme(rng, 8)
+	for slices.IsSortedFunc(small, compareShardIDs) {
+		rng.Shuffle(len(small), func(i, j int) { small[i], small[j] = small[j], small[i] })
+	}
+	smallBefore := slices.Clone(small)
+	_, err = CanonicalShardOrder(small)
+	require.NoError(t, err)
+	require.Equal(t, smallBefore, small)
 }
 
-// Lazy per-shard certificate derivation from the one authenticated tree: allocations of one derivation
-// grow with the tree depth, not with the number of shards (the old path scanned all leaves).
+// Lazy per-shard certificate derivation from the one authenticated tree: leaf lookups are one index probe
+// (counted) and the allocations of one derivation grow with the tree depth, not with the number of shards.
 func TestAuthenticatedView_LazyCertificateWorkIndependentOfS(t *testing.T) {
 	build := func(n int) *AuthenticatedPartitionView {
 		scheme := canonicalSorted(randomCompleteScheme(rand.New(rand.NewSource(int64(n))), n))
@@ -204,6 +215,16 @@ func TestAuthenticatedView_LazyCertificateWorkIndependentOfS(t *testing.T) {
 	for _, n := range []int{16, 64, 256, 1024, 4096} {
 		av := build(n)
 		id := av.view.Leaves[n-1].ShardID // last leaf: worst case for a linear scan
+		av.leafProbes.Store(0)
+		const lookups = 5
+		for i := 0; i < lookups; i++ {
+			_, err := av.Certificate(id)
+			require.NoError(t, err)
+			_, ok := av.ShardConfHash(id)
+			require.True(t, ok)
+		}
+		// exactly one index probe per lookup whatever S is (a linear scan of the last leaf would examine S)
+		require.EqualValues(t, 2*lookups, av.leafProbes.Load(), "S=%d", n)
 		allocs := testing.AllocsPerRun(20, func() {
 			_, err := av.Certificate(id)
 			require.NoError(t, err)

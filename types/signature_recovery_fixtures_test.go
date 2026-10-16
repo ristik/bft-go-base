@@ -189,11 +189,12 @@ func buildSigFixtures(t *testing.T) sigFixtureFile {
 	add("one-dropped-one-v-flipped-quorum-lost", "", seal(func(m SignatureMap) { delete(m, "node4"); flip("node1")(m) }))
 	add("one-v-out-of-range-quorum-met", "v=4 is rejected, three valid signatures remain", seal(func(m SignatureMap) { m["node1"] = withV(m["node1"], 4) }))
 	add("two-high-s-quorum-lost", "", seal(func(m SignatureMap) { m["node1"] = highS(m["node1"]); m["node2"] = highS(m["node2"]) }))
+	add("surplus-compact-quorum-met", "a surplus 64-byte compact entry contributes zero votes next to a met quorum", seal(func(m SignatureMap) { m["node4"] = m["node4"][:64] }))
 	add("two-compact-quorum-lost", "", seal(func(m SignatureMap) { m["node1"] = m["node1"][:64]; m["node2"] = m["node2"][:64] }))
 	add("copied-signature-under-other-id-quorum-lost", "node2/node3 carry node1's signature", seal(func(m SignatureMap) { m["node2"] = m["node1"]; m["node3"] = m["node1"] }))
 	for _, c := range cases {
 		switch c.Name {
-		case "valid-all-four", "one-v-flipped-quorum-still-met", "one-signature-dropped-quorum-met", "one-v-out-of-range-quorum-met":
+		case "valid-all-four", "one-v-flipped-quorum-still-met", "one-signature-dropped-quorum-met", "one-v-out-of-range-quorum-met", "surplus-compact-quorum-met":
 			require.True(t, c.Accept, c.Name)
 		default:
 			require.False(t, c.Accept, c.Name)

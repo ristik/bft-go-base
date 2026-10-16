@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/big"
 
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/secp256k1"
@@ -21,6 +22,11 @@ type (
 	verifierSecp256k1 struct {
 		pubKey []byte
 	}
+)
+
+var (
+	secp256k1N, _  = new(big.Int).SetString("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", 16)
+	secp256k1HalfN = new(big.Int).Rsh(secp256k1N, 1)
 )
 
 // MaxRecoveryID is the largest valid secp256k1 recovery ID (libsecp256k1 compact recoverable format).
@@ -54,10 +60,12 @@ func (v *verifierSecp256k1) VerifyBytes(sig []byte, data []byte) error {
 // VerifyHash verifies the hash against a canonical recoverable signature using the internal public key.
 //
 // The signature must be exactly 65 bytes, r[32] || s[32] || v[1], with 1 <= r,s < n, low-S (s <= n/2) and a
-// recovery ID v in 0..3 (no 27/28 or EIP-155 interpretation). The recovery ID is authenticated: the public key
-// recovered from the hash and the signature with v must be the verifier's key, so changing v of a valid
-// signature (even to another value in 0..3) is rejected. A 64-byte compact signature is not a canonical
-// signature and is rejected here; use VerifyCompactHash where that primitive is explicitly intended.
+// recovery ID v in 0..3 (no 27/28 or EIP-155 interpretation). These cheap checks are followed by exactly one
+// public key recovery (Q' = r^-1(sR - zG), one two-term linear combination) and a comparison with the trusted
+// key: Q' == Q implies sR = zG + rQ, i.e. ordinary ECDSA validity and the selected recovery branch, so no
+// separate ECDSA verification is performed. A digest of zero or >= n is reduced mod n, as in ECDSA. A 64-byte
+// compact signature is not a canonical signature and is rejected here; use VerifyCompactHash where that
+// primitive is explicitly intended.
 func (v *verifierSecp256k1) VerifyHash(sig []byte, hash []byte) error {
 	if v == nil || v.pubKey == nil || sig == nil || hash == nil {
 		return ErrInvalidArgument
@@ -65,17 +73,21 @@ func (v *verifierSecp256k1) VerifyHash(sig []byte, hash []byte) error {
 	if len(sig) != ethcrypto.SignatureLength {
 		return fmt.Errorf("signature length is %d b (expected %d b)", len(sig), ethcrypto.SignatureLength)
 	}
+	if len(hash) != ethcrypto.DigestLength {
+		return fmt.Errorf("digest length is %d b (expected %d b)", len(hash), ethcrypto.DigestLength)
+	}
 	if sig[ethcrypto.RecoveryIDOffset] > MaxRecoveryID {
 		return fmt.Errorf("%w: recovery id %d out of range", ErrVerificationFailed, sig[ethcrypto.RecoveryIDOffset])
 	}
-	// range, low-S and the ECDSA check against the trusted key
-	if !secp256k1.VerifySignature(v.pubKey, hash, sig[:ethcrypto.RecoveryIDOffset]) {
-		return ErrVerificationFailed
+	// 1 <= r < n and 1 <= s <= n/2 (low-S). ValidateSignatureValues is not used: it only admits v in {0,1}.
+	r, s := new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:64])
+	if r.Sign() == 0 || r.Cmp(secp256k1N) >= 0 || s.Sign() == 0 || s.Cmp(secp256k1HalfN) > 0 {
+		return fmt.Errorf("%w: r or s out of range or s is not low", ErrVerificationFailed)
 	}
-	// the recovery ID must select the trusted key
+	// the single recovery; the library rejects invalid lifts/decompression and the identity
 	recovered, err := secp256k1.RecoverPubkey(hash, sig)
 	if err != nil || !bytes.Equal(recovered, v.pubKey) {
-		return fmt.Errorf("%w: recovery id does not recover the trusted key", ErrVerificationFailed)
+		return ErrVerificationFailed
 	}
 	return nil
 }

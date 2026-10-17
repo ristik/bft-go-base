@@ -75,11 +75,9 @@ var partitionViewDecMode = func() cbor.DecMode {
 	return m
 }()
 
-// raw aliases drop the codec methods to avoid recursive calls.
-type (
-	partitionViewRaw     PartitionViewV1
-	partitionViewLeafRaw PartitionViewLeafV1
-)
+// partitionViewRaw drops the codec methods of PartitionViewV1 to avoid recursive calls. The leaf type has no
+// codec methods, so it needs no such alias.
+type partitionViewRaw PartitionViewV1
 
 /*
 MarshalCBOR encodes the view. The version is never defaulted and the view

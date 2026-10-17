@@ -427,3 +427,29 @@ func TestAuthenticateView_PinsMustBeComplete(t *testing.T) {
 	_, err = pvAuth(one, WithPinnedTopology(PartitionViewTopology{ShardConfHashes: map[string][]byte{}}))
 	require.ErrorContains(t, err, "pinned topology")
 }
+
+// A typed nil trust base (a lookup which returned a nil *RootTrustBaseV1) is "no trust base", not a panic
+// (bft-go-base#12).
+func TestTrustBaseSealVerifier_TypedNilTrustBase(t *testing.T) {
+	var tb *RootTrustBaseV1
+	seal := &UnicitySeal{Version: 1, NetworkID: NetworkMainNet, Epoch: 1}
+	require.NotPanics(t, func() {
+		require.ErrorIs(t, TrustBaseSealVerifier(tb).VerifySeal(seal), ErrRootValidatorInfoMissing)
+		require.ErrorIs(t, TrustBaseSealVerifierUntil(tb, 100).VerifySeal(seal), ErrRootValidatorInfoMissing)
+		require.ErrorIs(t, TrustBaseSealVerifier(nil).VerifySeal(seal), ErrRootValidatorInfoMissing)
+		require.ErrorIs(t, TrustBaseSealVerifier(tb).VerifySeal(nil), ErrRootValidatorInfoMissing)
+	})
+}
+
+// cloneUC is an independent copy of the certificate (CBOR round trip).
+func cloneUC(uc *UnicityCertificate) (*UnicityCertificate, error) {
+	b, err := uc.MarshalCBOR()
+	if err != nil {
+		return nil, fmt.Errorf("encoding unicity certificate: %w", err)
+	}
+	var c UnicityCertificate
+	if err := c.UnmarshalCBOR(b); err != nil {
+		return nil, fmt.Errorf("copying unicity certificate: %w", err)
+	}
+	return &c, nil
+}

@@ -171,7 +171,10 @@ func compareShardIDs(a, b ShardID) int {
 	return cmp.Compare(a.length, b.length)
 }
 
-// IsValid checks that the scheme is a non-trivial prefix-free set of non-empty shard IDs.
+// IsValid checks that the scheme is a non-trivial, prefix-free and complete set of non-empty shard IDs
+// (the empty scheme denotes a single shard and is valid). Complete means that the shard IDs cover the whole
+// shard tree: every bit string is prefixed by exactly one shard ID. An incomplete scheme such as {"00", "01"}
+// is rejected, as building a shard tree for it can't terminate.
 //
 // In bit string order every extension of a shard ID A sorts directly after A, so a scheme is prefix-free
 // (and duplicate-free) iff no ID is a prefix of its successor. That is O(S) comparisons for an already
@@ -208,5 +211,67 @@ func (sh ShardingScheme) sortedValid(cmp func(a, b ShardID) int) (ShardingScheme
 			return nil, fmt.Errorf("scheme is not prefix-free: %s is prefix of %s", a, b)
 		}
 	}
+	if err := checkComplete(ordered); err != nil {
+		return nil, err
+	}
 	return ordered, nil
+}
+
+// checkComplete checks that a non-empty, prefix-free scheme in bit string order covers the whole shard tree.
+//
+// Read a shard ID as the interval [x, x+2^-len) of [0,1), where x is the ID as a binary fraction. A prefix-free scheme
+// covers the tree iff the intervals in order tile [0,1): the first one starts at 0, each one starts where the previous
+// one ends, and the last one ends at 1. The end of shard ID A is A+1 (as a len(A)-bit integer), and as unused bits of
+// ShardID.bits are zero, "starts at" is equality of the zero padded byte strings. That is O(S) steps of O(length / 8)
+// each, independent of how long the IDs are (no 2^length arithmetic).
+func checkComplete(ordered ShardingScheme) error {
+	if len(ordered) == 0 {
+		return nil
+	}
+	if first := ordered[0]; !allBits(first, 0) {
+		return fmt.Errorf("scheme does not cover the whole shard tree: nothing before %s", first)
+	}
+	for i := 1; i < len(ordered); i++ {
+		end, overflow := shardIDEnd(ordered[i-1])
+		if overflow || !equalPadded(end, ordered[i].bits) {
+			return fmt.Errorf("scheme does not cover the whole shard tree: gap between %s and %s", ordered[i-1], ordered[i])
+		}
+	}
+	if last := ordered[len(ordered)-1]; !allBits(last, 1) {
+		return fmt.Errorf("scheme does not cover the whole shard tree: nothing after %s", last)
+	}
+	return nil
+}
+
+// allBits returns true if all bits of the shard ID are equal to bit (0 or 1).
+func allBits(id ShardID, bit byte) bool {
+	for i := uint(0); i < id.length; i++ {
+		if (id.bits[i/8]>>(7-i%8))&1 != bit {
+			return false
+		}
+	}
+	return true
+}
+
+// shardIDEnd returns the bits of id+1 as a len(id)-bit integer (unused bits zero), overflow is true
+// when all bits of the id are 1 (the interval of the shard ends at 1).
+func shardIDEnd(id ShardID) (end []byte, overflow bool) {
+	end = slices.Clone(id.bits)
+	for i := int(id.length) - 1; i >= 0; i-- {
+		mask := byte(1) << (7 - uint(i)%8)
+		if end[i/8]&mask == 0 {
+			end[i/8] |= mask
+			return end, false
+		}
+		end[i/8] &^= mask
+	}
+	return nil, true
+}
+
+// equalPadded compares byte strings as if the shorter one was padded with zero bytes.
+func equalPadded(a, b []byte) bool {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	return bytes.Equal(a, b[:len(a)]) && !slices.ContainsFunc(b[len(a):], func(c byte) bool { return c != 0 })
 }

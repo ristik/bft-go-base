@@ -5,7 +5,7 @@ import (
 	"crypto"
 	"errors"
 	"fmt"
-	"math/big"
+	"reflect"
 	"slices"
 
 	"github.com/fxamacker/cbor/v2"
@@ -75,11 +75,9 @@ var partitionViewDecMode = func() cbor.DecMode {
 	return m
 }()
 
-// raw aliases drop the codec methods to avoid recursive calls.
-type (
-	partitionViewRaw     PartitionViewV1
-	partitionViewLeafRaw PartitionViewLeafV1
-)
+// partitionViewRaw drops the codec methods of PartitionViewV1 to avoid recursive calls. The leaf type has no
+// codec methods, so it needs no such alias.
+type partitionViewRaw PartitionViewV1
 
 /*
 MarshalCBOR encodes the view. The version is never defaulted and the view
@@ -207,12 +205,16 @@ func (l PartitionViewLeafV1) validateBounds() error {
 	if len(ir.SummaryValue) > MaxPartitionViewSummaryValueBytes {
 		return fmt.Errorf("summary value is %d bytes, limit is %d", len(ir.SummaryValue), MaxPartitionViewSummaryValueBytes)
 	}
-	for name, h := range map[string][]byte{
-		"state hash": ir.Hash, "previous hash": ir.PreviousHash, "block hash": ir.BlockHash, "executed transactions hash": ir.ETHash,
+	// a fixed slice, not a map: the first malformed field reported is deterministic and no map is allocated per leaf
+	for _, f := range [...]struct {
+		name string
+		hash []byte
+	}{
+		{"state hash", ir.Hash}, {"previous hash", ir.PreviousHash}, {"block hash", ir.BlockHash}, {"executed transactions hash", ir.ETHash},
 	} {
 		// absent/empty (initial state, unchanged state) or a full hash
-		if n := len(h); n != 0 && n != partitionViewHashLen {
-			return fmt.Errorf("%s must be empty or %d bytes, got %d", name, partitionViewHashLen, n)
+		if n := len(f.hash); n != 0 && n != partitionViewHashLen {
+			return fmt.Errorf("%s must be empty or %d bytes, got %d", f.name, partitionViewHashLen, n)
 		}
 	}
 	irBytes, err := ir.MarshalCBOR()
@@ -262,22 +264,12 @@ func canonicalShardOrder(scheme ShardingScheme, cmp func(a, b ShardID) int) ([]S
 	if err != nil {
 		return nil, fmt.Errorf("invalid sharding scheme: %w", err)
 	}
-	// validation already produced the canonical (left-to-right) order
+	// validation (prefix-free and complete) already produced the canonical (left-to-right) order
 	ids := slices.Collect(sorted.All())
-	maxLen := uint(0)
 	for _, id := range ids {
 		if id.length > MaxPartitionViewShardIDBits {
 			return nil, fmt.Errorf("shard ID %s is longer than %d bits", id, MaxPartitionViewShardIDBits)
 		}
-		maxLen = max(maxLen, id.length)
-	}
-	// prefix-free scheme covers the whole tree iff the Kraft sum equals one
-	sum := new(big.Int)
-	for _, id := range ids {
-		sum.Add(sum, new(big.Int).Lsh(big.NewInt(1), maxLen-id.length))
-	}
-	if sum.Cmp(new(big.Int).Lsh(big.NewInt(1), maxLen)) != 0 {
-		return nil, errors.New("sharding scheme does not cover the whole shard tree")
 	}
 	return ids, nil
 }
@@ -421,7 +413,9 @@ TrustBaseSealVerifier adapts a root trust base to SealVerifier. Besides the
 quorum signatures it enforces the authority context of the trust base: the
 seal must be of the same network and epoch and must not predate the epoch start.
 */
-func TrustBaseSealVerifier(tb RootTrustBase) SealVerifier { return trustBaseSealVerifier{tb: tb} }
+func TrustBaseSealVerifier(tb RootTrustBase) SealVerifier {
+	return trustBaseSealVerifier{tb: normalizeTrustBase(tb)}
+}
 
 /*
 TrustBaseSealVerifierUntil is TrustBaseSealVerifier with the end boundary of
@@ -430,7 +424,20 @@ next epoch as given by an authenticated trust base history. Pass the boundary
 only when the history provides it; an absent boundary does not prove freshness.
 */
 func TrustBaseSealVerifierUntil(tb RootTrustBase, nextEpochStart uint64) SealVerifier {
-	return trustBaseSealVerifier{tb: tb, end: nextEpochStart}
+	return trustBaseSealVerifier{tb: normalizeTrustBase(tb), end: nextEpochStart}
+}
+
+// normalizeTrustBase turns a typed nil (a nil pointer in a non-nil interface, ie a trust base lookup which
+// returned a nil *RootTrustBaseV1) into a nil interface, so that VerifySeal returns ErrRootValidatorInfoMissing
+// instead of panicking in the trust base getters.
+func normalizeTrustBase(tb RootTrustBase) RootTrustBase {
+	if tb == nil {
+		return nil
+	}
+	if rv := reflect.ValueOf(tb); rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return nil
+	}
+	return tb
 }
 
 type trustBaseSealVerifier struct {

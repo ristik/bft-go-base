@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sync/atomic"
 )
 
 /*
@@ -35,13 +34,13 @@ type AuthenticatedPartitionView struct {
 	partition PartitionID
 	scheme    ShardingScheme
 	view      *PartitionViewV1
-	enclosing *UnicityCertificate
 	tree      ShardTree
 	// index maps ShardID.Key() to the leaf position: built once at authentication so that
 	// per-shard accessors and lazy certificate derivation are O(1) lookups, not O(S) scans
 	index map[string]int
-	// leafProbes counts the leaves examined by shard lookups (observability for the scaling tests)
-	leafProbes atomic.Int64
+	// onProbe is a test hook, called once per shard lookup (the scaling tests count index probes with it).
+	// It is nil in production: the cost is one predictable nil check per lookup.
+	onProbe func()
 	// sealBytes and pathBytes are the canonical encodings of the complete seal and
 	// partition path every derived UC carries
 	sealBytes []byte
@@ -158,10 +157,6 @@ func AuthenticateView(candidate *PartitionViewV1, enclosingUC *UnicityCertificat
 		partition: partition, scheme: slices.Clone(topo.Scheme), view: view, tree: tree,
 		index: leafIndex(view), sealBytes: sealBytes, pathBytes: pathBytes,
 	}
-	// the enclosing UC as an independent copy
-	if av.enclosing, err = cloneUC(enclosingUC); err != nil {
-		return nil, err
-	}
 	return av, nil
 }
 
@@ -183,7 +178,9 @@ func checkCompletePins(topo PartitionViewTopology) error {
 
 // find returns the leaf position of the shard: one index probe, independent of the number of shards.
 func (a *AuthenticatedPartitionView) find(shard ShardID) (int, bool) {
-	a.leafProbes.Add(1)
+	if a.onProbe != nil {
+		a.onProbe()
+	}
 	i, ok := a.index[shard.Key()]
 	return i, ok
 }
@@ -195,18 +192,6 @@ func leafIndex(v *PartitionViewV1) map[string]int {
 		m[v.Leaves[i].ShardID.Key()] = i
 	}
 	return m
-}
-
-func cloneUC(uc *UnicityCertificate) (*UnicityCertificate, error) {
-	b, err := uc.MarshalCBOR()
-	if err != nil {
-		return nil, fmt.Errorf("encoding unicity certificate: %w", err)
-	}
-	var c UnicityCertificate
-	if err := c.UnmarshalCBOR(b); err != nil {
-		return nil, fmt.Errorf("copying unicity certificate: %w", err)
-	}
-	return &c, nil
 }
 
 // Partition is the authenticated partition.

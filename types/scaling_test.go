@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"math"
+	"math/big"
 	"math/rand"
 	"slices"
 	"testing"
@@ -41,7 +42,8 @@ func canonicalSorted(s ShardingScheme) ShardingScheme {
 	return c
 }
 
-// referenceIsValid is the previous O(S^2) pairwise definition: the slow reference model.
+// referenceIsValid is the previous O(S^2) pairwise definition (plus the Kraft sum completeness check, an independent
+// model of what checkComplete does): the slow reference model.
 func referenceIsValid(sh ShardingScheme) (ok bool, pairs int) {
 	if len(sh) == 1 {
 		return false, 0
@@ -58,6 +60,18 @@ func referenceIsValid(sh ShardingScheme) (ok bool, pairs int) {
 			}
 		}
 	}
+	// prefix-free scheme covers the whole tree iff the Kraft sum equals one
+	maxLen := uint(0)
+	for _, id := range sh {
+		maxLen = max(maxLen, id.length)
+	}
+	sum := new(big.Int)
+	for _, id := range sh {
+		sum.Add(sum, new(big.Int).Lsh(big.NewInt(1), maxLen-id.length))
+	}
+	if len(sh) > 0 && sum.Cmp(new(big.Int).Lsh(big.NewInt(1), maxLen)) != 0 {
+		return false, pairs
+	}
 	return true, pairs
 }
 
@@ -70,7 +84,7 @@ func TestShardingSchemeIsValid_MatchesReferenceModel(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	for iter := 0; iter < 2000; iter++ {
 		s := randomCompleteScheme(rng, 2+rng.Intn(40))
-		switch rng.Intn(6) {
+		switch rng.Intn(8) {
 		case 1: // duplicate
 			s = append(s, s[rng.Intn(len(s))])
 		case 2: // a prefix of an existing shard
@@ -91,6 +105,12 @@ func TestShardingSchemeIsValid_MatchesReferenceModel(t *testing.T) {
 			s = append(s, ShardID{})
 		case 5: // single
 			s = s[:1]
+		case 6: // a missing shard
+			i := rng.Intn(len(s))
+			s = append(slices.Clone(s[:i]), s[i+1:]...)
+		case 7: // a shard of the complete scheme replaced by one of its two halves
+			i := rng.Intn(len(s))
+			s[i], _ = s[i].Split()
 		}
 		rng.Shuffle(len(s), func(i, j int) { s[i], s[j] = s[j], s[i] })
 		want, _ := referenceIsValid(s)

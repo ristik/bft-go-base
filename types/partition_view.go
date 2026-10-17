@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"errors"
 	"fmt"
-	"math/big"
 	"slices"
 
 	"github.com/fxamacker/cbor/v2"
@@ -262,22 +261,12 @@ func canonicalShardOrder(scheme ShardingScheme, cmp func(a, b ShardID) int) ([]S
 	if err != nil {
 		return nil, fmt.Errorf("invalid sharding scheme: %w", err)
 	}
-	// validation already produced the canonical (left-to-right) order
+	// validation (prefix-free and complete) already produced the canonical (left-to-right) order
 	ids := slices.Collect(sorted.All())
-	maxLen := uint(0)
 	for _, id := range ids {
 		if id.length > MaxPartitionViewShardIDBits {
 			return nil, fmt.Errorf("shard ID %s is longer than %d bits", id, MaxPartitionViewShardIDBits)
 		}
-		maxLen = max(maxLen, id.length)
-	}
-	// prefix-free scheme covers the whole tree iff the Kraft sum equals one
-	sum := new(big.Int)
-	for _, id := range ids {
-		sum.Add(sum, new(big.Int).Lsh(big.NewInt(1), maxLen-id.length))
-	}
-	if sum.Cmp(new(big.Int).Lsh(big.NewInt(1), maxLen)) != 0 {
-		return nil, errors.New("sharding scheme does not cover the whole shard tree")
 	}
 	return ids, nil
 }

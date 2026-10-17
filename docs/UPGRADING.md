@@ -61,8 +61,8 @@ next section describes the one recommended.
 
 1. **Cut over all root validators together** (and a shard consensus cohort per its own verification paths). A
    rolling upgrade *inside* the validator cohort is not supported: consensus must not mix verification rules.
-   New certifications pause during the cutover; do not promise uninterrupted writes (quiesce submissions, or rely on
-   the aggregators' bounded retry).
+   New certifications pause during the cutover; do not promise uninterrupted writes (quiesce submissions, or let the
+   aggregators hold their pending block and resend it when the root is back).
 2. **Keep the aggregators running** and upgrade them afterwards, one by one, keeping each shard available. Strict-valid
    certificates pass the old verifier, and aggregators already send strict-valid requests. An old aggregator keeps the
    old (wider) acceptance until it is upgraded; its acceptance of certificates may differ from upgraded nodes until then.

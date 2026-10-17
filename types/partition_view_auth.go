@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sync/atomic"
 )
 
 /*
@@ -39,8 +38,9 @@ type AuthenticatedPartitionView struct {
 	// index maps ShardID.Key() to the leaf position: built once at authentication so that
 	// per-shard accessors and lazy certificate derivation are O(1) lookups, not O(S) scans
 	index map[string]int
-	// leafProbes counts the leaves examined by shard lookups (observability for the scaling tests)
-	leafProbes atomic.Int64
+	// onProbe is a test hook, called once per shard lookup (the scaling tests count index probes with it).
+	// It is nil in production: the cost is one predictable nil check per lookup.
+	onProbe func()
 	// sealBytes and pathBytes are the canonical encodings of the complete seal and
 	// partition path every derived UC carries
 	sealBytes []byte
@@ -178,7 +178,9 @@ func checkCompletePins(topo PartitionViewTopology) error {
 
 // find returns the leaf position of the shard: one index probe, independent of the number of shards.
 func (a *AuthenticatedPartitionView) find(shard ShardID) (int, bool) {
-	a.leafProbes.Add(1)
+	if a.onProbe != nil {
+		a.onProbe()
+	}
 	i, ok := a.index[shard.Key()]
 	return i, ok
 }

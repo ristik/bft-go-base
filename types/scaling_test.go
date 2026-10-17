@@ -235,7 +235,8 @@ func TestAuthenticatedView_LazyCertificateWorkIndependentOfS(t *testing.T) {
 	for _, n := range []int{16, 64, 256, 1024, 4096} {
 		av := build(n)
 		id := av.view.Leaves[n-1].ShardID // last leaf: worst case for a linear scan
-		av.leafProbes.Store(0)
+		var probes int
+		av.onProbe = func() { probes++ }
 		const lookups = 5
 		for i := 0; i < lookups; i++ {
 			_, err := av.Certificate(id)
@@ -244,7 +245,8 @@ func TestAuthenticatedView_LazyCertificateWorkIndependentOfS(t *testing.T) {
 			require.True(t, ok)
 		}
 		// exactly one index probe per lookup whatever S is (a linear scan of the last leaf would examine S)
-		require.EqualValues(t, 2*lookups, av.leafProbes.Load(), "S=%d", n)
+		require.Equal(t, 2*lookups, probes, "S=%d", n)
+		av.onProbe = nil // the allocation count below is of the production path
 		allocs := testing.AllocsPerRun(20, func() {
 			_, err := av.Certificate(id)
 			require.NoError(t, err)

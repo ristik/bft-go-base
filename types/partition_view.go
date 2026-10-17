@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 
 	"github.com/fxamacker/cbor/v2"
@@ -410,7 +411,9 @@ TrustBaseSealVerifier adapts a root trust base to SealVerifier. Besides the
 quorum signatures it enforces the authority context of the trust base: the
 seal must be of the same network and epoch and must not predate the epoch start.
 */
-func TrustBaseSealVerifier(tb RootTrustBase) SealVerifier { return trustBaseSealVerifier{tb: tb} }
+func TrustBaseSealVerifier(tb RootTrustBase) SealVerifier {
+	return trustBaseSealVerifier{tb: normalizeTrustBase(tb)}
+}
 
 /*
 TrustBaseSealVerifierUntil is TrustBaseSealVerifier with the end boundary of
@@ -419,7 +422,20 @@ next epoch as given by an authenticated trust base history. Pass the boundary
 only when the history provides it; an absent boundary does not prove freshness.
 */
 func TrustBaseSealVerifierUntil(tb RootTrustBase, nextEpochStart uint64) SealVerifier {
-	return trustBaseSealVerifier{tb: tb, end: nextEpochStart}
+	return trustBaseSealVerifier{tb: normalizeTrustBase(tb), end: nextEpochStart}
+}
+
+// normalizeTrustBase turns a typed nil (a nil pointer in a non-nil interface, ie a trust base lookup which
+// returned a nil *RootTrustBaseV1) into a nil interface, so that VerifySeal returns ErrRootValidatorInfoMissing
+// instead of panicking in the trust base getters.
+func normalizeTrustBase(tb RootTrustBase) RootTrustBase {
+	if tb == nil {
+		return nil
+	}
+	if rv := reflect.ValueOf(tb); rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return nil
+	}
+	return tb
 }
 
 type trustBaseSealVerifier struct {

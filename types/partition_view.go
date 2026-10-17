@@ -207,12 +207,16 @@ func (l PartitionViewLeafV1) validateBounds() error {
 	if len(ir.SummaryValue) > MaxPartitionViewSummaryValueBytes {
 		return fmt.Errorf("summary value is %d bytes, limit is %d", len(ir.SummaryValue), MaxPartitionViewSummaryValueBytes)
 	}
-	for name, h := range map[string][]byte{
-		"state hash": ir.Hash, "previous hash": ir.PreviousHash, "block hash": ir.BlockHash, "executed transactions hash": ir.ETHash,
+	// a fixed slice, not a map: the first malformed field reported is deterministic and no map is allocated per leaf
+	for _, f := range [...]struct {
+		name string
+		hash []byte
+	}{
+		{"state hash", ir.Hash}, {"previous hash", ir.PreviousHash}, {"block hash", ir.BlockHash}, {"executed transactions hash", ir.ETHash},
 	} {
 		// absent/empty (initial state, unchanged state) or a full hash
-		if n := len(h); n != 0 && n != partitionViewHashLen {
-			return fmt.Errorf("%s must be empty or %d bytes, got %d", name, partitionViewHashLen, n)
+		if n := len(f.hash); n != 0 && n != partitionViewHashLen {
+			return fmt.Errorf("%s must be empty or %d bytes, got %d", f.name, partitionViewHashLen, n)
 		}
 	}
 	irBytes, err := ir.MarshalCBOR()

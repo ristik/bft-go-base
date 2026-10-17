@@ -678,3 +678,34 @@ func Test_PartitionView_NilPathStep(t *testing.T) {
 		require.ErrorContains(t, err, "hash step 0 is nil")
 	})
 }
+
+// With several malformed hashes the first one in the fixed field order is reported, every time
+// (bft-go-base#12: iterating a map literal reported a random one).
+func TestPartitionViewLeaf_ValidateBounds_FirstMalformedHashIsReported(t *testing.T) {
+	bad, bad2 := []byte{1, 2, 3, 4, 5}, []byte{6, 7, 8, 9, 10} // different, as an unchanged state has other rules
+	leaf := func(mutate func(ir *InputRecord)) PartitionViewLeafV1 {
+		l := pvView(t, ShardingScheme{}).Leaves[0]
+		ir := *l.InputRecord
+		l.InputRecord = &ir
+		mutate(l.InputRecord)
+		return l
+	}
+	tests := []struct {
+		name   string
+		mutate func(ir *InputRecord)
+		want   string
+	}{
+		{"all malformed", func(ir *InputRecord) { ir.Hash, ir.PreviousHash, ir.BlockHash, ir.ETHash = bad, bad2, bad, bad }, "state hash must be empty or 32 bytes, got 5"},
+		{"all but state hash", func(ir *InputRecord) { ir.PreviousHash, ir.BlockHash, ir.ETHash = bad2, bad, bad }, "previous hash must be empty or 32 bytes, got 5"},
+		{"block and ET hash", func(ir *InputRecord) { ir.BlockHash, ir.ETHash = bad, bad }, "block hash must be empty or 32 bytes, got 5"},
+		{"ET hash only", func(ir *InputRecord) { ir.ETHash = bad }, "executed transactions hash must be empty or 32 bytes, got 5"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			l := leaf(tc.mutate)
+			for range 300 {
+				require.EqualError(t, l.validateBounds(), tc.want)
+			}
+		})
+	}
+}

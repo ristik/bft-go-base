@@ -35,7 +35,6 @@ type AuthenticatedPartitionView struct {
 	partition PartitionID
 	scheme    ShardingScheme
 	view      *PartitionViewV1
-	enclosing *UnicityCertificate
 	tree      ShardTree
 	// index maps ShardID.Key() to the leaf position: built once at authentication so that
 	// per-shard accessors and lazy certificate derivation are O(1) lookups, not O(S) scans
@@ -158,10 +157,6 @@ func AuthenticateView(candidate *PartitionViewV1, enclosingUC *UnicityCertificat
 		partition: partition, scheme: slices.Clone(topo.Scheme), view: view, tree: tree,
 		index: leafIndex(view), sealBytes: sealBytes, pathBytes: pathBytes,
 	}
-	// the enclosing UC as an independent copy
-	if av.enclosing, err = cloneUC(enclosingUC); err != nil {
-		return nil, err
-	}
 	return av, nil
 }
 
@@ -195,18 +190,6 @@ func leafIndex(v *PartitionViewV1) map[string]int {
 		m[v.Leaves[i].ShardID.Key()] = i
 	}
 	return m
-}
-
-func cloneUC(uc *UnicityCertificate) (*UnicityCertificate, error) {
-	b, err := uc.MarshalCBOR()
-	if err != nil {
-		return nil, fmt.Errorf("encoding unicity certificate: %w", err)
-	}
-	var c UnicityCertificate
-	if err := c.UnmarshalCBOR(b); err != nil {
-		return nil, fmt.Errorf("copying unicity certificate: %w", err)
-	}
-	return &c, nil
 }
 
 // Partition is the authenticated partition.

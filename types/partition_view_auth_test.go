@@ -440,3 +440,16 @@ func TestTrustBaseSealVerifier_TypedNilTrustBase(t *testing.T) {
 		require.ErrorIs(t, TrustBaseSealVerifier(tb).VerifySeal(nil), ErrRootValidatorInfoMissing)
 	})
 }
+
+// cloneUC is an independent copy of the certificate (CBOR round trip).
+func cloneUC(uc *UnicityCertificate) (*UnicityCertificate, error) {
+	b, err := uc.MarshalCBOR()
+	if err != nil {
+		return nil, fmt.Errorf("encoding unicity certificate: %w", err)
+	}
+	var c UnicityCertificate
+	if err := c.UnmarshalCBOR(b); err != nil {
+		return nil, fmt.Errorf("copying unicity certificate: %w", err)
+	}
+	return &c, nil
+}

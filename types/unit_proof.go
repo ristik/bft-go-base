@@ -113,6 +113,9 @@ func (u *UnitStateProof) Verify(algorithm crypto.Hash, unitState *UnitState, ucv
 	if err != nil {
 		return fmt.Errorf("failed to calculate unit state hash: %w", err)
 	}
+	if u.UnitTreeCert == nil || u.StateTreeCert == nil {
+		return errors.New("unit tree certificate or state tree certificate is nil")
+	}
 	if !bytes.Equal(u.UnitTreeCert.UnitStateHash, unitStateHash) {
 		return errors.New("unit state hash does not match unit state hash in unit tree cert")
 	}
@@ -132,6 +135,9 @@ func (u *UnitStateProof) Verify(algorithm crypto.Hash, unitState *UnitState, ucv
 }
 
 func (u *UnitStateProof) CalculateStateTreeOutput(algorithm crypto.Hash) ([]byte, uint64, error) {
+	if u.UnitTreeCert == nil || u.StateTreeCert == nil {
+		return nil, 0, errors.New("unit tree certificate or state tree certificate is nil")
+	}
 	var z []byte
 	var err error
 	if u.UnitTreeCert.TransactionRecordHash == nil {
@@ -160,7 +166,10 @@ func (u *UnitStateProof) CalculateStateTreeOutput(algorithm crypto.Hash) ([]byte
 	if err != nil {
 		return nil, 0, err
 	}
-	for _, p := range sc.Path {
+	for i, p := range sc.Path {
+		if p == nil {
+			return nil, 0, fmt.Errorf("state tree path item %d is nil", i)
+		}
 		vv := p.Value + v + p.SiblingSummaryValue
 		if id.Compare(p.UnitID) == -1 {
 			h, err = computeHash(algorithm, p.UnitID, p.LogsHash, vv, h, v, p.SiblingSummaryHash, p.SiblingSummaryValue)

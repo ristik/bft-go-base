@@ -42,6 +42,9 @@ func EqualIR(a, b *InputRecord) (bool, error) {
 }
 
 func AssertEqualIR(a, b *InputRecord) error {
+	if a == nil || b == nil {
+		return ErrInputRecordIsNil
+	}
 	if a.Epoch != b.Epoch {
 		return fmt.Errorf("epoch is different: %v vs %v", a.Epoch, b.Epoch)
 	}
@@ -142,6 +145,9 @@ func NewInputRecord() *InputRecord {
 }
 
 func (x *InputRecord) MarshalCBOR() ([]byte, error) {
+	if x == nil {
+		return nil, ErrInputRecordIsNil
+	}
 	type alias InputRecord
 	cp := *x
 	if cp.Version == 0 {

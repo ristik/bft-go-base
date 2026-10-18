@@ -11,6 +11,9 @@ import (
 
 var ErrIndexOutOfBounds = errors.New("merkle tree data index out of bounds")
 
+// ErrNilPathItem: a path entry is nil (a CBOR null in a decoded path).
+var ErrNilPathItem = errors.New("merkle path item is nil")
+
 type (
 	MerkleTree struct {
 		root       *node
@@ -55,6 +58,9 @@ func EvalMerklePath(merklePath []*PathItem, leaf Data, hashAlgorithm crypto.Hash
 	}
 	hasher := abhash.New(hashAlgorithm.New())
 	for _, item := range merklePath {
+		if item == nil {
+			return nil, ErrNilPathItem
+		}
 		if item.DirectionLeft {
 			hasher.Write(h)
 			hasher.Write(item.Hash)
@@ -80,6 +86,9 @@ func PlainTreeOutput(merklePath []*PathItem, input []byte, hashAlgorithm crypto.
 	h := input
 	var err error
 	for _, item := range merklePath {
+		if item == nil {
+			return nil, ErrNilPathItem
+		}
 		if item.DirectionLeft {
 			hasher.Write(h)
 			hasher.Write(item.Hash)

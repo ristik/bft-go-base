@@ -17,6 +17,9 @@ const (
 
 var ErrTreeEmpty = errors.New("tree is empty")
 
+// ErrNilPathItem: a path entry is nil (a CBOR null in a decoded path).
+var ErrNilPathItem = errors.New("indexed merkle path item is nil")
+
 type (
 	Tree struct {
 		root       *node
@@ -96,6 +99,9 @@ func IndexTreeOutput(merklePath []*PathItem, key []byte, hashAlgorithm crypto.Ha
 		return nil, ErrTreeEmpty
 	}
 	leaf, merklePath := merklePath[0], merklePath[1:]
+	if leaf == nil {
+		return nil, ErrNilPathItem
+	}
 
 	hasher := abhash.New(hashAlgorithm.New())
 	hasher.Write([]byte{tagLeaf})
@@ -107,6 +113,9 @@ func IndexTreeOutput(merklePath []*PathItem, key []byte, hashAlgorithm crypto.Ha
 	}
 	// follow hash chain
 	for _, item := range merklePath {
+		if item == nil {
+			return nil, ErrNilPathItem
+		}
 		hasher.Reset()
 		if bytes.Compare(key, item.Key) == 1 {
 			// key > item.Key is bigger - left link

@@ -91,6 +91,9 @@ func VerifyTxInclusion(txRecordProof *TxRecordProof, tb RootTrustBase, hashAlgor
 	txProof := txRecordProof.TxProof
 	merklePath := make([]*mt.PathItem, len(txProof.Chain))
 	for i, item := range txProof.Chain {
+		if item == nil {
+			return fmt.Errorf("transaction proof chain item %d is nil", i)
+		}
 		merklePath[i] = &mt.PathItem{
 			Hash:          item.Hash,
 			DirectionLeft: item.Left,

@@ -63,6 +63,13 @@ Input:
 Output: Root hash
 */
 func (cert ShardTreeCertificate) ComputeCertificateHash(IR *InputRecord, TRHash []byte, shardConfHash []byte, algo crypto.Hash) ([]byte, error) {
+	// callers which skip IsValid must not be able to index outside the shard ID bits or hash a nil record
+	if IR == nil {
+		return nil, ErrInputRecordIsNil
+	}
+	if cnt := uint(len(cert.SiblingHashes)); cnt != cert.Shard.Length() || uint(len(cert.Shard.bits)) != (cert.Shard.length+7)/8 {
+		return nil, fmt.Errorf("shard ID is %d bits (%d bytes) but got %d sibling hashes", cert.Shard.Length(), len(cert.Shard.bits), cnt)
+	}
 	h := abhash.New(algo.New())
 	h.Write(IR)
 	h.Write(TRHash)

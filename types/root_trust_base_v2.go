@@ -262,34 +262,17 @@ func (r *RootTrustBaseV2) VerifyQuorumSignatures(data []byte, signatures map[str
 	return nil
 }
 
-// VerifySignature verifies one member's signature and returns the member's weight. Accepted forms: the 64-byte compact signature (checked as r||s, low-S) or
-// the 65-byte form whose last byte (recovery id) is 0 or 1 AND is the recovery id that recovers to the member's key (the strict crypto.Verifier rule).
+// VerifySignature verifies one member's signature and returns the member's weight. The signature must be a canonical recoverable signature: exactly
+// 65 bytes, low-S, a recovery id that recovers to the member's key (the crypto.Verifier.VerifyBytes rule, owner decision of the 2026-10-19 upstream
+// sync). The 64-byte compact form is not accepted for UTB entries; crypto.CompactVerifier stays available for the frozen B1 profile only.
 func (r *RootTrustBaseV2) VerifySignature(data []byte, sig []byte, nodeID string) (uint64, error) {
 	i, found := slices.BinarySearchFunc(r.RootNodes, nodeID, func(m *NodeInfo, id string) int { return bytes.Compare([]byte(m.NodeID), []byte(id)) })
 	if !found {
 		return 0, fmt.Errorf("signer %q is not a member", nodeID)
 	}
-	switch {
-	case len(sig) == 64:
-	case len(sig) == 65 && sig[64] <= 1:
-	default:
-		return 0, fmt.Errorf("signer %q: signature form is not 64 bytes or 65 bytes with recovery id 0/1", nodeID)
-	}
 	verifier, err := r.RootNodes[i].SigVerifier()
 	if err != nil {
 		return 0, fmt.Errorf("signer %q: %w", nodeID, err)
-	}
-	// The two forms use the two explicit primitives of the strict verifier: Verifier.VerifyBytes accepts only a canonical 65-byte recoverable signature (its
-	// recovery id must recover to the member's key), the compact r||s form is verified by CompactVerifier.VerifyCompactBytes.
-	if len(sig) == 64 {
-		compact, ok := verifier.(abcrypto.CompactVerifier)
-		if !ok {
-			return 0, fmt.Errorf("signer %q: the member verifier has no compact signature support", nodeID)
-		}
-		if err := compact.VerifyCompactBytes(sig, data); err != nil {
-			return 0, fmt.Errorf("signer %q: %w", nodeID, err)
-		}
-		return r.RootNodes[i].Stake, nil
 	}
 	if err := verifier.VerifyBytes(sig, data); err != nil {
 		return 0, fmt.Errorf("signer %q: %w", nodeID, err)

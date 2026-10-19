@@ -14,6 +14,7 @@ var (
 	ErrUnicityTreeCertificateIsNil = errors.New("unicity tree certificate is nil")
 	ErrUCIsNil                     = errors.New("new UC is nil")
 	ErrLastUCIsNil                 = errors.New("last UC is nil")
+	ErrNilPathItem                 = errors.New("hash step is nil")
 )
 
 type UnicityTreeCertificate struct {
@@ -53,6 +54,12 @@ func (utc *UnicityTreeCertificate) IsValid(partition PartitionID) error {
 	if utc.Partition != partition {
 		return fmt.Errorf("invalid partition identifier: expected %s, got %s", partition, utc.Partition)
 	}
+	// a CBOR null inside hashSteps decodes to a nil entry: reject it before anything dereferences the path
+	for i, s := range utc.HashSteps {
+		if s == nil {
+			return fmt.Errorf("hash step %d: %w", i, ErrNilPathItem)
+		}
+	}
 	return nil
 }
 
@@ -62,6 +69,9 @@ EvalAuthPath aka Compute Unicity Tree Certificate.
 The shardTreeRoot is output of the CompShardTreeCert function.
 */
 func (utc *UnicityTreeCertificate) EvalAuthPath(shardTreeRoot []byte, hashAlgorithm crypto.Hash) ([]byte, error) {
+	if utc == nil {
+		return nil, ErrUnicityTreeCertificateIsNil
+	}
 	// restore the merkle path with the first hash step
 	hasher := abhash.New(hashAlgorithm.New())
 	(&UnicityTreeData{
@@ -73,7 +83,10 @@ func (utc *UnicityTreeCertificate) EvalAuthPath(shardTreeRoot []byte, hashAlgori
 		return nil, fmt.Errorf("failed to calculate leaf hash: %w", err)
 	}
 	hashSteps := []*imt.PathItem{imt.NewPathItem(utc.Partition.Bytes(), h)}
-	for _, s := range utc.HashSteps {
+	for i, s := range utc.HashSteps {
+		if s == nil { // callers which skip IsValid are covered too
+			return nil, fmt.Errorf("hash step %d: %w", i, ErrNilPathItem)
+		}
 		hashSteps = append(hashSteps, s.ToIMTPathItem())
 	}
 
@@ -111,5 +124,8 @@ func (utc *UnicityTreeCertificate) UnmarshalCBOR(data []byte) error {
 }
 
 func (p *PathItem) ToIMTPathItem() *imt.PathItem {
+	if p == nil {
+		return nil
+	}
 	return imt.NewPathItem(p.Key.Bytes(), p.Hash)
 }

@@ -79,6 +79,9 @@ func NewPathItems(pathItems []*imt.PathItem) ([]*PathItem, error) {
 }
 
 func NewPathItem(p *imt.PathItem) (*PathItem, error) {
+	if p == nil {
+		return nil, ErrNilPathItem
+	}
 	partitionID, err := BytesToPartitionID(p.Key)
 	if err != nil {
 		return nil, err

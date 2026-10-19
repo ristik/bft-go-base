@@ -259,7 +259,7 @@ func (pdr *PartitionDescriptionRecord) UnmarshalCBOR(data []byte) error {
 
 func (pdr *PartitionDescriptionRecord) FindValidator(nodeID string) *NodeInfo {
 	for _, validator := range pdr.Validators {
-		if validator.NodeID == nodeID {
+		if validator != nil && validator.NodeID == nodeID {
 			return validator
 		}
 	}

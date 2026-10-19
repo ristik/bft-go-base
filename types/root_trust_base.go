@@ -49,6 +49,7 @@ type (
 
 		// cached signature verifier; private fields are ignored in JSON and CBOR encodings
 		sigVerifier     abcrypto.Verifier
+		sigVerifierErr  error // error of the (one time) verifier initialization, returned by every call
 		sigVerifierInit sync.Once
 	}
 
@@ -76,6 +77,11 @@ func NewTrustBase(networkID NetworkID, rootNodes []*NodeInfo, opts ...Option) (*
 
 	// Sort rootNodes by NodeID, so that we have a consistent order in every
 	// implementation/encoding and we can perform binary search on them.
+	for i, n := range rootNodes {
+		if n == nil {
+			return nil, fmt.Errorf("root node %d is nil", i)
+		}
+	}
 	slices.SortFunc(rootNodes, func(a, b *NodeInfo) int {
 		return cmp.Compare(a.NodeID, b.NodeID)
 	})
@@ -159,12 +165,14 @@ func (n *NodeInfo) IsValid() error {
 }
 
 func (n *NodeInfo) SigVerifier() (abcrypto.Verifier, error) {
-	var err error
+	if n == nil {
+		return nil, errors.New("node info is nil")
+	}
 	n.sigVerifierInit.Do(func() {
-		n.sigVerifier, err = abcrypto.NewVerifierSecp256k1(n.SigKey)
+		n.sigVerifier, n.sigVerifierErr = abcrypto.NewVerifierSecp256k1(n.SigKey)
 	})
-	if err != nil {
-		return nil, fmt.Errorf("invalid signing key: %w", err)
+	if n.sigVerifierErr != nil {
+		return nil, fmt.Errorf("invalid signing key: %w", n.sigVerifierErr)
 	}
 	return n.sigVerifier, nil
 }
@@ -295,6 +303,9 @@ func (r *RootTrustBaseV1) UnmarshalCBOR(data []byte) error {
 
 func (r *RootTrustBaseV1) getRootNode(nodeID string) *NodeInfo {
 	idx, found := slices.BinarySearchFunc(r.RootNodes, nodeID, func(nodeInfo *NodeInfo, nodeID string) int {
+		if nodeInfo == nil { // a decoded trust base may carry a null node: it is never found and never votes
+			return -1
+		}
 		return cmp.Compare(nodeInfo.NodeID, nodeID)
 	})
 	if found {

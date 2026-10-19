@@ -351,7 +351,10 @@ func TestV2StrictSignatureVerification(t *testing.T) {
 			})
 		}
 		require.NoError(t, with(func(e *RootTrustBaseV2) { e.Signatures["a"] = sig[:64] }), "the 64-byte form is accepted")
-		require.NoError(t, with(func(e *RootTrustBaseV2) { e.Signatures["a"] = append(slices.Clone(sig[:64]), sig[64]^1) }), "either recovery id value is a signature form (the verifier ignores it)")
+		// the 65-byte form is verified by the strict crypto.Verifier: the recovery id must be the one that recovers to the member's key
+		err := with(func(e *RootTrustBaseV2) { e.Signatures["a"] = append(slices.Clone(sig[:64]), sig[64]^1) })
+		require.ErrorIs(t, err, ErrTrustBaseV2Signature, "the other recovery id value recovers to another key")
+		require.NoError(t, with(func(e *RootTrustBaseV2) { e.Signatures["a"] = slices.Clone(sig) }))
 	})
 	t.Run("a signature over other bytes", func(t *testing.T) {
 		err := g.VerifyQuorumSignatures(append(slices.Clone(sb), 0), good.Signatures)

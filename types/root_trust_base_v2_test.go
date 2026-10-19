@@ -413,3 +413,63 @@ func TestV2ChainRules(t *testing.T) {
 }
 
 func sha256Of(b []byte) []byte { h := crypto.SHA256.New(); h.Write(b); return h.Sum(nil) }
+
+// An absent hash has one byte form: null. The empty byte string is refused on decode and an in-memory empty value encodes as null, so one entry has one
+// EntryID.
+func TestV2AbsentHashesAreCanonicalNull(t *testing.T) {
+	g := v2Genesis(t)
+	absent := func(mut func(e *RootTrustBaseV2)) *RootTrustBaseV2 {
+		e := *g
+		mut(&e)
+		return &e
+	}
+	nilForm := absent(func(e *RootTrustBaseV2) { e.StateHash, e.ChangeRecordHash = nil, nil })
+	emptyForm := absent(func(e *RootTrustBaseV2) { e.StateHash, e.ChangeRecordHash = []byte{}, []byte{} })
+
+	t.Run("an in-memory empty value encodes as null and has the same identity", func(t *testing.T) {
+		a, err := nilForm.MarshalCBOR()
+		require.NoError(t, err)
+		b, err := emptyForm.MarshalCBOR()
+		require.NoError(t, err)
+		require.Equal(t, a, b)
+		ia, err := nilForm.EntryID()
+		require.NoError(t, err)
+		ib, err := emptyForm.EntryID()
+		require.NoError(t, err)
+		require.Equal(t, ia, ib)
+		_, err = DecodeRootTrustBaseV2(b)
+		require.NoError(t, err)
+	})
+	t.Run("the empty byte string form is refused on decode", func(t *testing.T) {
+		raw, err := nilForm.MarshalCBOR()
+		require.NoError(t, err)
+		// hand-built second byte form: the two null hash fields (f6 f6) replaced by two empty byte strings (40 40), just before the 32-byte previous entry id
+		marker := append([]byte{0xf6, 0xf6, 0x58, 0x20}, make([]byte, 32)...)
+		i := bytes.LastIndex(raw, marker)
+		require.GreaterOrEqual(t, i, 0, "the null hash fields are where the test expects them")
+		other := slices.Concat(raw[:i], []byte{0x40, 0x40}, raw[i+2:])
+		_, err = DecodeRootTrustBaseV2(other)
+		require.ErrorIs(t, err, ErrTrustBaseV2Encoding)
+		require.Contains(t, err.Error(), "empty byte string")
+		// each field on its own
+		for _, one := range [][]byte{{0x40, 0xf6}, {0xf6, 0x40}} {
+			o := slices.Concat(raw[:i], one, raw[i+2:])
+			_, err = DecodeRootTrustBaseV2(o)
+			require.ErrorIs(t, err, ErrTrustBaseV2Encoding)
+		}
+	})
+	t.Run("a present hash is exactly 32 bytes", func(t *testing.T) {
+		for _, n := range []int{1, 31, 33} {
+			e := absent(func(e *RootTrustBaseV2) { e.StateHash = bytes.Repeat([]byte{7}, n) })
+			require.ErrorIs(t, e.Validate(), ErrTrustBaseV2Invalid, "%d bytes", n)
+		}
+		e := absent(func(e *RootTrustBaseV2) {
+			e.StateHash, e.ChangeRecordHash = bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 32)
+		})
+		raw, err := e.MarshalCBOR()
+		require.NoError(t, err)
+		back, err := DecodeRootTrustBaseV2(raw)
+		require.NoError(t, err)
+		require.Equal(t, e.StateHash, back.StateHash)
+	})
+}

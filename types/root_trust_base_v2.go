@@ -24,6 +24,9 @@ import (
 //   - decoding is strict: exact arity, exact tag/version, bounded sizes, no duplicate map keys, no trailing bytes, deterministic (canonical) encoding only;
 //   - signature verification is strict: an unknown member, a malformed or an invalid signature fails the whole check even when the valid ones reach quorum.
 //
+// Absent hashes have one form: StateHash and ChangeRecordHash are either absent (nil, encoded as CBOR null) or exactly 32 bytes. The empty byte string is
+// not a valid wire form (DecodeRootTrustBaseV2 refuses it), and an in-memory empty value is encoded as null, so an entry has one EntryID.
+//
 // The genesis entry (no predecessor) has PreviousEntryID of 32 zero bytes and null Signatures; it is authenticated by an out-of-band pin on its EntryID,
 // never by signatures. Every other entry carries the non-empty signature map of the predecessor's members over SigBytes().
 //
@@ -103,6 +106,10 @@ func DecodeRootTrustBaseV2(data []byte) (*RootTrustBaseV2, error) {
 	if out.Version != TrustBaseV2Version {
 		return nil, fmt.Errorf("%w: version %d, expected %d", ErrTrustBaseV2Encoding, out.Version, TrustBaseV2Version)
 	}
+	// an absent hash is null, never an empty byte string (that would be a second byte form, and a second EntryID, of the same entry)
+	if out.StateHash != nil && len(out.StateHash) == 0 || out.ChangeRecordHash != nil && len(out.ChangeRecordHash) == 0 {
+		return nil, fmt.Errorf("%w: an absent hash is null, not an empty byte string", ErrTrustBaseV2Encoding)
+	}
 	again, err := out.MarshalCBOR()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrTrustBaseV2Encoding, err)
@@ -120,8 +127,16 @@ func (r *RootTrustBaseV2) MarshalCBOR() ([]byte, error) {
 	if r.Version != TrustBaseV2Version {
 		return nil, fmt.Errorf("%w: version %d, expected %d", ErrTrustBaseV2Encoding, r.Version, TrustBaseV2Version)
 	}
+	// the canonical absent hash is null: an empty value is normalised to nil so that nil and empty give the same bytes and the same EntryID
+	c := *r
+	if len(c.StateHash) == 0 {
+		c.StateHash = nil
+	}
+	if len(c.ChangeRecordHash) == 0 {
+		c.ChangeRecordHash = nil
+	}
 	type alias RootTrustBaseV2
-	return Cbor.MarshalTaggedValue(UnicityTrustBaseTag, (*alias)(r))
+	return Cbor.MarshalTaggedValue(UnicityTrustBaseTag, (*alias)(&c))
 }
 
 func (r *RootTrustBaseV2) UnmarshalCBOR(data []byte) error {

@@ -258,6 +258,7 @@ func TestV2StructureRules(t *testing.T) {
 	require.NoError(t, mk(func(*RootTrustBaseV2) {}))
 	cases := map[string]func(e *RootTrustBaseV2){
 		"epoch zero":        func(e *RootTrustBaseV2) { e.Epoch = 0 },
+		"network id zero":   func(e *RootTrustBaseV2) { e.NetworkID = 0 },
 		"no members":        func(e *RootTrustBaseV2) { e.RootNodes = nil },
 		"unsorted members":  func(e *RootTrustBaseV2) { e.RootNodes[0], e.RootNodes[1] = e.RootNodes[1], e.RootNodes[0] },
 		"duplicate member":  func(e *RootTrustBaseV2) { e.RootNodes[1].NodeID = "a" },

@@ -89,15 +89,20 @@ func tbID(t *testing.T, e *RootTrustBaseV2) string {
 	return tbHex(id[:])
 }
 
-// tbBundle is the tag-39015 object: [version=1, [entry, ...]], every entry a tag-39000 value, ascending epochs.
+// tbBundle is the complete release bundle, the tag-39015 GetTrustBase response with status OK as bft-core gettrustbase.EncodeBundle writes it:
+// [version=1, network, status=0, fromEpoch, effectiveEnd, endEntryID, [entry, ...], null]. Every entry is a complete tag-39000 value, epochs ascending
+// from the genesis entry; the cursor (last element) is null.
 func tbBundle(t *testing.T, entries ...*RootTrustBaseV2) []byte {
 	raws := make([]cbor.RawMessage, 0, len(entries))
 	for _, e := range entries {
 		raws = append(raws, tbEncode(t, e))
 	}
+	first, last := entries[0], entries[len(entries)-1]
+	id, err := last.EntryID()
+	require.NoError(t, err)
 	enc, err := cbor.CoreDetEncOptions().EncMode()
 	require.NoError(t, err)
-	content, err := enc.Marshal([]any{uint64(1), raws})
+	content, err := enc.Marshal([]any{uint64(1), uint64(first.NetworkID), uint64(0), first.Epoch, last.Epoch, id[:], raws, nil})
 	require.NoError(t, err)
 	out, err := enc.Marshal(cbor.RawTag{Number: tbBundleTag, Content: content})
 	require.NoError(t, err)
@@ -165,7 +170,7 @@ func tbWeighted(t *testing.T, weights ...uint64) *RootTrustBaseV2 {
 func TestTrustBaseV2SharedVectors(t *testing.T) {
 	v := tbVectors{Spec: []string{
 		"Entries are tag 39000, record version 2; entryId = SHA-256(sigBytes); sigBytes is the entry with the signature field encoded as CBOR null.",
-		"A bundle is tag 39015: [version=1, [entry, ...]], each element a complete tag-39000 entry, epochs ascending; a one-entry bundle holds a genesis entry.",
+		"A complete bundle is tag 39015 with the GetTrustBase response layout [version=1, network, status=0, fromEpoch, effectiveEnd, endEntryID, [entry, ...], null]: each entry a complete tag-39000 entry, consecutive ascending from a genesis entry, endEntryID = entryId of the last; a one-entry bundle holds the genesis entry only (reference: bft-core gettrustbase/bundle.go).",
 		"decode: errorClass encoding = the bytes are not a well-formed deterministic version-2 entry; invalid = well-formed but a structure rule fails.",
 		"history: outcome per step per the append rule in types/root_trust_base_v2_vectors_test.go; finalEntryIds is the held chain afterwards.",
 		"weightedQuorum: signatures by members of the named committee entry over the entry's sigBytes; the successor is valid iff all signers are members with valid 65-byte low-S recoverable signatures and the signed weight reaches the committee threshold.",

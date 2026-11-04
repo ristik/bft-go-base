@@ -215,6 +215,7 @@ func TestTrustBaseV2SharedVectors(t *testing.T) {
 	dec("signatures missing", rawEntry(t, func(f []any) []any { return f[:len(f)-1] }), false, "encoding")
 	dec("empty state hash", rawEntry(t, func(f []any) []any { f[6] = []byte{}; return f }), false, "encoding")
 	dec("quorum threshold 2 of 4", rawEntry(t, func(f []any) []any { f[5] = uint64(2); return f }), false, "invalid")
+	dec("network id zero", rawEntry(t, func(f []any) []any { f[1] = uint64(0); return f }), false, "invalid")
 	dec("epoch zero", rawEntry(t, func(f []any) []any { f[2] = uint64(0); return f }), false, "invalid")
 	dec("genesis predecessor with signatures", rawEntry(t, func(f []any) []any { f[8] = make([]byte, 32); return f }), false, "invalid")
 	dec("non-genesis without signatures", rawEntry(t, func(f []any) []any { f[9] = nil; return f }), false, "invalid")

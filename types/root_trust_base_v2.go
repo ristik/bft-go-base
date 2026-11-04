@@ -207,6 +207,10 @@ func (r *RootTrustBaseV2) Validate() error {
 	if r.Epoch == 0 {
 		return bad("epoch is zero")
 	}
+	// network ids are 1..=0xffff (the Rust and JS SDKs refuse 0 as well); 0 is the unset value
+	if r.NetworkID == 0 {
+		return bad("network id is zero")
+	}
 	n := len(r.RootNodes)
 	if n == 0 || n > MaxTrustBaseV2Members {
 		return bad("%d members (1..%d)", n, MaxTrustBaseV2Members)

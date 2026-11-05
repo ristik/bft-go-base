@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -78,4 +79,27 @@ func TestMemberOrderInTheFileIsNotARule(t *testing.T) {
 	b, err := Convert(reordered)
 	require.NoError(t, err)
 	require.Equal(t, a.Bundle, b.Bundle, "members reversed in the file, same entry")
+}
+
+// The shipped names (owner §46): unicity-trustbase.<network>.cbor, and the pin sidecar unicity-trustbase.<network>.entryid.
+func TestOutputFileNames(t *testing.T) {
+	data, err := os.ReadFile("testdata/bft-trustbase.testnet2.json")
+	require.NoError(t, err)
+	r, err := Convert(data)
+	require.NoError(t, err)
+	id := hex.EncodeToString(r.EntryID[:])
+	files := outputFiles("testnet2", r, id)
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	require.Equal(t, []string{
+		"unicity-trustbase.testnet2.cbor",
+		"unicity-trustbase.testnet2.cbor.hex",
+		"unicity-trustbase.testnet2.entryid",
+		"unicity-trustbase.testnet2.genesis.cbor",
+	}, names)
+	require.Equal(t, r.Bundle, files["unicity-trustbase.testnet2.cbor"])
+	require.Equal(t, id+"\n", string(files["unicity-trustbase.testnet2.entryid"]))
 }

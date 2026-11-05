@@ -3,8 +3,8 @@
 //
 //	trustbase-bundle -in bft-trustbase.mainnet.json -out-dir out -name mainnet
 //
-// writes out/mainnet.bundle.cbor (the file to ship), out/mainnet.bundle.cbor.hex, out/mainnet.genesis.cbor (the bare tag-39000 entry) and out/mainnet.entryid
-// (the genesis EntryID, hex: the pin clients compare). The V1 file's own signatures are not carried over: a V2 genesis has none and is authenticated by the
+// writes out/unicity-trustbase.mainnet.cbor (the file to ship), out/unicity-trustbase.mainnet.cbor.hex, out/unicity-trustbase.mainnet.genesis.cbor (the bare
+// tag-39000 entry) and out/unicity-trustbase.mainnet.entryid (the genesis EntryID, hex: the pin clients compare). The V1 file's own signatures are not carried over: a V2 genesis has none and is authenticated by the
 // pin. Only a genesis is converted: epoch 1, no state or change hash, no predecessor.
 package main
 
@@ -132,6 +132,18 @@ func encodeBundle(e *types.RootTrustBaseV2, entry, id []byte) ([]byte, error) {
 	return enc.Marshal(cbor.RawTag{Number: BundleTag, Content: content})
 }
 
+// outputFiles names the files written for one network: unicity-trustbase.<network>.cbor is the bundle to ship, and the sidecar of the pin is
+// unicity-trustbase.<network>.entryid.
+func outputFiles(name string, r *Result, id string) map[string][]byte {
+	stem := "unicity-trustbase." + name
+	return map[string][]byte{
+		stem + ".cbor":         r.Bundle,
+		stem + ".cbor.hex":     []byte(hex.EncodeToString(r.Bundle) + "\n"),
+		stem + ".genesis.cbor": r.Entry,
+		stem + ".entryid":      []byte(id + "\n"),
+	}
+}
+
 func main() {
 	in := flag.String("in", "", "version-1 genesis JSON (unicity-ids bft-trustbase.<network>.json)")
 	outDir := flag.String("out-dir", ".", "output directory")
@@ -152,12 +164,7 @@ func main() {
 		os.Exit(1)
 	}
 	id := hex.EncodeToString(r.EntryID[:])
-	files := map[string][]byte{
-		*name + ".bundle.cbor":     r.Bundle,
-		*name + ".bundle.cbor.hex": []byte(hex.EncodeToString(r.Bundle) + "\n"),
-		*name + ".genesis.cbor":    r.Entry,
-		*name + ".entryid":         []byte(id + "\n"),
-	}
+	files := outputFiles(*name, r, id)
 	for fn, b := range files {
 		if err := os.WriteFile(filepath.Join(*outDir, fn), b, 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, err)

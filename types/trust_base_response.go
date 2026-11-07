@@ -29,8 +29,10 @@ const (
 	DefaultTrustBaseMaxEntries  = 64
 	DefaultTrustBaseMaxResponse = 1 << 20
 
-	// MaxTrustBaseEntryBytes bounds one encoded entry in a response.
-	MaxTrustBaseEntryBytes = 64 << 10
+	// MaxTrustBaseEntryBytes bounds one encoded entry in a response and in a stored history: 128 KiB. A full entry (256 members with 128-byte node ids and 256
+	// predecessor signatures) is about 93 KiB, 16 members need about 6 KiB; the bound is the largest valid entry with margin, so a valid entry is never
+	// refused and no oversize one is ever stored.
+	MaxTrustBaseEntryBytes = 128 << 10
 
 	// TrustBaseResponseEnvelopeBound is a bound on the response bytes besides the entries (network, status, epochs, end id, array heads), well above
 	// the real size.

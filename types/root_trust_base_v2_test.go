@@ -258,6 +258,7 @@ func TestV2StructureRules(t *testing.T) {
 	require.NoError(t, mk(func(*RootTrustBaseV2) {}))
 	cases := map[string]func(e *RootTrustBaseV2){
 		"epoch zero":        func(e *RootTrustBaseV2) { e.Epoch = 0 },
+		"network id zero":   func(e *RootTrustBaseV2) { e.NetworkID = 0 },
 		"no members":        func(e *RootTrustBaseV2) { e.RootNodes = nil },
 		"unsorted members":  func(e *RootTrustBaseV2) { e.RootNodes[0], e.RootNodes[1] = e.RootNodes[1], e.RootNodes[0] },
 		"duplicate member":  func(e *RootTrustBaseV2) { e.RootNodes[1].NodeID = "a" },
@@ -350,7 +351,7 @@ func TestV2StrictSignatureVerification(t *testing.T) {
 				require.ErrorIs(t, err, ErrTrustBaseV2Signature)
 			})
 		}
-		// V2 entries take the strict recoverable rule only: the 64-byte compact form is rejected (it stays a B1-only primitive)
+		// V2 entries take the strict recoverable rule only: the 64-byte compact form is rejected
 		require.ErrorIs(t, with(func(e *RootTrustBaseV2) { e.Signatures["a"] = sig[:64] }), ErrTrustBaseV2Signature, "the 64-byte compact form is not a V2 form")
 		// the 65-byte form must carry the recovery id that recovers to the member's key
 		err := with(func(e *RootTrustBaseV2) { e.Signatures["a"] = append(slices.Clone(sig[:64]), sig[64]^1) })

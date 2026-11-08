@@ -207,6 +207,10 @@ func (r *RootTrustBaseV2) Validate() error {
 	if r.Epoch == 0 {
 		return bad("epoch is zero")
 	}
+	// network ids are 1..=0xffff (the Rust and JS SDKs refuse 0 as well); 0 is the unset value
+	if r.NetworkID == 0 {
+		return bad("network id is zero")
+	}
 	n := len(r.RootNodes)
 	if n == 0 || n > MaxTrustBaseV2Members {
 		return bad("%d members (1..%d)", n, MaxTrustBaseV2Members)
@@ -278,8 +282,8 @@ func (r *RootTrustBaseV2) VerifyQuorumSignatures(data []byte, signatures map[str
 }
 
 // VerifySignature verifies one member's signature and returns the member's weight. The signature must be a canonical recoverable signature: exactly
-// 65 bytes, low-S, a recovery id that recovers to the member's key (the crypto.Verifier.VerifyBytes rule, owner decision of the 2026-10-19 upstream
-// sync). The 64-byte compact form is not accepted for UTB entries; crypto.CompactVerifier stays available for the frozen B1 profile only.
+// 65 bytes, low-S, a recovery id that recovers to the member's key (the crypto.Verifier.VerifyBytes rule).
+// The 64-byte compact form is not accepted for UTB entries.
 func (r *RootTrustBaseV2) VerifySignature(data []byte, sig []byte, nodeID string) (uint64, error) {
 	i, found := slices.BinarySearchFunc(r.RootNodes, nodeID, func(m *NodeInfo, id string) int { return bytes.Compare([]byte(m.NodeID), []byte(id)) })
 	if !found {
